@@ -7,7 +7,11 @@ use core::{
     marker::{PhantomData, PhantomPinned},
     mem::{ManuallyDrop, MaybeUninit},
 };
+
+pub use typenum;
 use typenum::{False, True};
+
+pub use partial_this_macro::partial;
 
 pub use uninit_this::*;
 mod uninit_this {
@@ -409,7 +413,7 @@ pub mod test {
             impl Field for foo {
                 type Target = super::Foo;
                 type Type = i32;
-                type Id = typenum::U1;
+                type Id = crate::typenum::U1;
 
                 unsafe fn drop<const INIT: bool>(this: &mut std::mem::MaybeUninit<Self::Target>) {
                     if INIT {
@@ -435,7 +439,7 @@ pub mod test {
             impl Field for bar {
                 type Target = super::Foo;
                 type Type = f32;
-                type Id = typenum::U2;
+                type Id = crate::typenum::U2;
 
                 unsafe fn drop<const INIT: bool>(this: &mut std::mem::MaybeUninit<Self::Target>) {
                     if INIT {
@@ -463,7 +467,7 @@ pub mod test {
         mod uninit_fields {
             use super::*;
             use crate::chain::{self, traits::MapInit};
-            use typenum::{U1, U2};
+            use crate::typenum::{U1, U2};
 
             pub trait Foo_uninit_foo<T> {
                 type Output;
@@ -515,7 +519,7 @@ pub mod test {
         mod inited_fields {
             use super::*;
             use crate::chain::{self, traits::GetField};
-            use typenum::{U1, U2};
+            use crate::typenum::{U1, U2};
 
             pub trait Foo_inited_foo<T> {
                 fn foo(&self) -> &i32;
@@ -584,5 +588,17 @@ pub mod test {
         *a.foo_mut() = 123;
         let foo = a.bar(456.0).done();
         println!("r: {:?}", foo);
+    }
+}
+
+#[cfg(test)]
+#[allow(nonstandard_style)]
+pub mod test1 {
+    use super::*;
+
+    #[partial]
+    pub struct Foo {
+        pub foo: i32,
+        pub bar: f32,
     }
 }

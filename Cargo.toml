@@ -1,3 +1,11 @@
 [workspace]
-members = ["partial_this"]
+members = ["partial_this", "partial_this_macro"]
 resolver = "3"
+
+[workspace.dependencies]
+partial_this = {path = "partial_this"}
+partial_this_macro = {path = "partial_this_macro"}
+proc-macro2 = "1"
+quote = "1"
+syn = {version = "3", features = ["full"]}
+typenum = "1.20"
