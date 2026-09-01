@@ -123,6 +123,7 @@ pub(crate) fn generate(item: &ItemStruct, cfg: &PartialConfig) -> syn::Result<To
 
             impl #partial_impl_generics PartialThis<#u> for #struct_type #partial_where {
                 type Output = #output_ty;
+                #[cfg_attr(not(debug_assertions), inline(always))]
                 fn partial(this: #u) -> Self::Output {
                     #ctor
                 }
@@ -257,6 +258,7 @@ fn gen_fields_module(
                 type Type = #fty;
                 type Id = ::#krate::typenum::#uid;
 
+                #[cfg_attr(not(debug_assertions), inline(always))]
                 unsafe fn drop<const #init: bool>(
                     this: &mut ::core::mem::MaybeUninit<Self::Target>,
                 ) {
@@ -265,6 +267,7 @@ fn gen_fields_module(
                     }
                 }
 
+                #[cfg_attr(not(debug_assertions), inline(always))]
                 unsafe fn init(
                     this: &mut ::core::mem::MaybeUninit<Self::Target>,
                     v: Self::Type,
@@ -272,12 +275,14 @@ fn gen_fields_module(
                     unsafe { ::core::ptr::write(&mut (*this.as_mut_ptr()).#access, v) }
                 }
 
+                #[cfg_attr(not(debug_assertions), inline(always))]
                 unsafe fn get(
                     this: &::core::mem::MaybeUninit<Self::Target>,
                 ) -> &Self::Type {
                     unsafe { &(*this.as_ptr()).#access }
                 }
 
+                #[cfg_attr(not(debug_assertions), inline(always))]
                 unsafe fn get_mut(
                     this: &mut ::core::mem::MaybeUninit<Self::Target>,
                 ) -> &mut Self::Type {
@@ -343,10 +348,12 @@ fn gen_uninit_module(
                 type Output =
                     <Self as MapInit<#fty, ::#krate::typenum::#uid, #c>>::Result;
 
+                #[cfg_attr(not(debug_assertions), inline(always))]
                 fn #fname(self, value: #fty) -> Self::Output {
                     unsafe { Self::map_init(self, value) }
                 }
 
+                #[cfg_attr(not(debug_assertions), inline(always))]
                 fn #assume_name(self) -> Self::Output {
                     unsafe { Self::assume_init(self) }
                 }
@@ -406,10 +413,12 @@ fn gen_inited_module(
                 for chain::Field<#init, #f, #n>
                 #impl_where
             {
+                #[cfg_attr(not(debug_assertions), inline(always))]
                 fn #fname(&self) -> &#fty {
                     unsafe { Self::get(self) }
                 }
 
+                #[cfg_attr(not(debug_assertions), inline(always))]
                 fn #mut_name(&mut self) -> &mut #fty {
                     unsafe { Self::get_mut(self) }
                 }

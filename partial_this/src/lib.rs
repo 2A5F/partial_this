@@ -198,14 +198,17 @@ mod uninit_this {
 
         type Inited = &'a mut T;
 
+        #[cfg_attr(not(debug_assertions), inline(always))]
         unsafe fn assume_init(self) -> Self::Inited {
             unsafe { self.assume_init_mut() }
         }
 
+        #[cfg_attr(not(debug_assertions), inline(always))]
         unsafe fn get(&self) -> &MaybeUninit<Self::Target> {
             self
         }
 
+        #[cfg_attr(not(debug_assertions), inline(always))]
         unsafe fn get_mut(&mut self) -> &mut MaybeUninit<Self::Target> {
             self
         }
@@ -214,14 +217,17 @@ mod uninit_this {
         type Target = T;
         type Inited = T;
 
+        #[cfg_attr(not(debug_assertions), inline(always))]
         unsafe fn assume_init(self) -> Self::Inited {
             unsafe { self.assume_init() }
         }
 
+        #[cfg_attr(not(debug_assertions), inline(always))]
         unsafe fn get(&self) -> &MaybeUninit<Self::Target> {
             self
         }
 
+        #[cfg_attr(not(debug_assertions), inline(always))]
         unsafe fn get_mut(&mut self) -> &mut MaybeUninit<Self::Target> {
             self
         }
@@ -230,14 +236,17 @@ mod uninit_this {
         type Target = T;
         type Inited = Box<T>;
 
+        #[cfg_attr(not(debug_assertions), inline(always))]
         unsafe fn assume_init(self) -> Self::Inited {
             unsafe { self.assume_init() }
         }
 
+        #[cfg_attr(not(debug_assertions), inline(always))]
         unsafe fn get(&self) -> &MaybeUninit<Self::Target> {
             self
         }
 
+        #[cfg_attr(not(debug_assertions), inline(always))]
         unsafe fn get_mut(&mut self) -> &mut MaybeUninit<Self::Target> {
             self
         }
@@ -246,14 +255,17 @@ mod uninit_this {
         type Target = T;
         type Inited = Rc<T>;
 
+        #[cfg_attr(not(debug_assertions), inline(always))]
         unsafe fn assume_init(self) -> Self::Inited {
             unsafe { self.assume_init() }
         }
 
+        #[cfg_attr(not(debug_assertions), inline(always))]
         unsafe fn get(&self) -> &MaybeUninit<Self::Target> {
             self
         }
 
+        #[cfg_attr(not(debug_assertions), inline(always))]
         unsafe fn get_mut(&mut self) -> &mut MaybeUninit<Self::Target> {
             Rc::get_mut(self).unwrap()
         }
@@ -262,14 +274,17 @@ mod uninit_this {
         type Target = T;
         type Inited = Arc<T>;
 
+        #[cfg_attr(not(debug_assertions), inline(always))]
         unsafe fn assume_init(self) -> Self::Inited {
             unsafe { self.assume_init() }
         }
 
+        #[cfg_attr(not(debug_assertions), inline(always))]
         unsafe fn get(&self) -> &MaybeUninit<Self::Target> {
             self
         }
 
+        #[cfg_attr(not(debug_assertions), inline(always))]
         unsafe fn get_mut(&mut self) -> &mut MaybeUninit<Self::Target> {
             Arc::get_mut(self).unwrap()
         }
@@ -330,6 +345,7 @@ pub mod chain {
         N: traits::ThisPtr,
     {
         /// Wraps `next` as a chain node
+        #[cfg_attr(not(debug_assertions), inline(always))]
         pub const fn keep(next: N) -> Self {
             Self(next, PhantomData)
         }
@@ -341,6 +357,7 @@ pub mod chain {
         N: traits::ThisPtr,
     {
         /// Marks the field as initialized and wraps the rest of the chain.
+        #[cfg_attr(not(debug_assertions), inline(always))]
         pub const fn init(next: N) -> Self {
             Self(next, PhantomData)
         }
@@ -352,6 +369,7 @@ pub mod chain {
         N: traits::ThisPtr,
     {
         /// Marks the field as uninitialized and wraps the rest of the chain.
+        #[cfg_attr(not(debug_assertions), inline(always))]
         pub const fn uninit(next: N) -> Self {
             Self(next, PhantomData)
         }
@@ -379,6 +397,7 @@ pub mod chain {
         {
             type Output = N::Output;
 
+            #[cfg_attr(not(debug_assertions), inline(always))]
             fn done(self) -> Self::Output {
                 unsafe {
                     let this = ManuallyDrop::new(self);
@@ -450,9 +469,12 @@ pub mod chain {
             type NextId = N::Id;
             type Target = N::Target;
 
+            #[cfg_attr(not(debug_assertions), inline(always))]
             fn this(this: &Self) -> &MaybeUninit<Self::Target> {
                 N::this(&this.0)
             }
+
+            #[cfg_attr(not(debug_assertions), inline(always))]
             fn this_mut(this: &mut Self) -> &mut MaybeUninit<Self::Target> {
                 N::this_mut(&mut this.0)
             }
@@ -463,6 +485,7 @@ pub mod chain {
             F: Field<Target = N::Target>,
             N: ThisPtr,
         {
+            #[cfg_attr(not(debug_assertions), inline(always))]
             fn drop(&mut self) {
                 unsafe { F::drop::<INIT>(N::this_mut(&mut self.0)) };
             }
@@ -492,10 +515,12 @@ pub mod chain {
             type Next = Self;
             type NextResult = Self;
 
+            #[cfg_attr(not(debug_assertions), inline(always))]
             unsafe fn map_init(_this: Self, _value: A) -> Self::Result {
                 unreachable!("never")
             }
 
+            #[cfg_attr(not(debug_assertions), inline(always))]
             unsafe fn assume_init(_this: Self) -> Self::Result {
                 unreachable!("never")
             }
@@ -514,6 +539,7 @@ pub mod chain {
             type Next = N;
             type NextResult = N::Result;
 
+            #[cfg_attr(not(debug_assertions), inline(always))]
             unsafe fn map_init(this: Self, value: A) -> Self::Result {
                 unsafe {
                     let this = ManuallyDrop::new(this);
@@ -522,6 +548,7 @@ pub mod chain {
                 }
             }
 
+            #[cfg_attr(not(debug_assertions), inline(always))]
             unsafe fn assume_init(this: Self) -> Self::Result {
                 unsafe {
                     let this = ManuallyDrop::new(this);
@@ -542,6 +569,7 @@ pub mod chain {
             type Next = N;
             type NextResult = N;
 
+            #[cfg_attr(not(debug_assertions), inline(always))]
             unsafe fn map_init(mut this: Self, value: A) -> Self::Result {
                 unsafe {
                     F::init(Self::this_mut(&mut this), value);
@@ -551,6 +579,7 @@ pub mod chain {
                 }
             }
 
+            #[cfg_attr(not(debug_assertions), inline(always))]
             unsafe fn assume_init(this: Self) -> Self::Result {
                 unsafe {
                     let this = ManuallyDrop::new(this);
@@ -581,10 +610,12 @@ pub mod chain {
             I: IsEqual<N::Id>,
             N: GetField<A, I, <I as IsEqual<Self::NextId>>::Output>,
         {
+            #[cfg_attr(not(debug_assertions), inline(always))]
             unsafe fn get<'a>(this: &'a Self) -> &'a A {
                 unsafe { N::get(&this.0) }
             }
 
+            #[cfg_attr(not(debug_assertions), inline(always))]
             unsafe fn get_mut<'a>(this: &'a mut Self) -> &'a mut A {
                 unsafe { N::get_mut(&mut this.0) }
             }
@@ -596,10 +627,12 @@ pub mod chain {
             N: ThisPtr,
             F::Id: IsEqual<I, Output = True>,
         {
+            #[cfg_attr(not(debug_assertions), inline(always))]
             unsafe fn get<'a>(this: &'a Self) -> &'a A {
                 unsafe { F::get(N::this(&this.0)) }
             }
 
+            #[cfg_attr(not(debug_assertions), inline(always))]
             unsafe fn get_mut<'a>(this: &'a mut Self) -> &'a mut A {
                 unsafe { F::get_mut(N::this_mut(&mut this.0)) }
             }
