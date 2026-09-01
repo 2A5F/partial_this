@@ -1,7 +1,15 @@
 [package]
-edition = "2024"
+categories = ["rust-patterns", "no-std"]
 name = "partial_this_macro"
-version = "0.1.0"
+
+authors = {workspace = true}
+description = {workspace = true}
+edition = {workspace = true}
+keywords = {workspace = true}
+license = {workspace = true}
+readme = {workspace = true}
+repository = {workspace = true}
+version = {workspace = true}
 
 [lib]
 proc-macro = true
