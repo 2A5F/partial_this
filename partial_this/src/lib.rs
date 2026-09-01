@@ -29,6 +29,15 @@ pub mod chain {
     }
 
     #[derive(Debug)]
+    pub struct ValueThis<T>(MaybeUninit<T>);
+
+    impl<T> ValueThis<T> {
+        pub const fn new(this: MaybeUninit<T>) -> Self {
+            Self(this)
+        }
+    }
+
+    #[derive(Debug)]
     pub struct BoxedThis<T>(Box<MaybeUninit<T>>);
 
     impl<T> BoxedThis<T> {
@@ -83,6 +92,14 @@ pub mod chain {
 
             fn done(self) -> Self::Output {
                 unsafe { self.0.assume_init_mut() }
+            }
+        }
+
+        impl<T> DonePartial for ValueThis<T> {
+            type Output = T;
+
+            fn done(self) -> Self::Output {
+                unsafe { self.0.assume_init() }
             }
         }
 
@@ -146,6 +163,19 @@ pub mod chain {
             }
         }
 
+        impl<T> ThisPtr for ValueThis<T> {
+            type Id = U0;
+            type NextId = U0;
+            type Target = T;
+
+            fn this(this: &Self) -> &MaybeUninit<Self::Target> {
+                &this.0
+            }
+            fn this_mut(this: &mut Self) -> &mut MaybeUninit<Self::Target> {
+                &mut this.0
+            }
+        }
+
         impl<T> ThisPtr for BoxedThis<T> {
             type Id = U0;
             type NextId = U0;
@@ -195,6 +225,16 @@ pub mod chain {
         }
 
         impl<'a, A, I, T> MapInit<A, I, False> for ScopedThis<'a, T> {
+            type Result = Self;
+            type Next = Self;
+            type NextResult = Self;
+
+            unsafe fn map_init(_this: Self, _value: A) -> Self::Result {
+                unreachable!("never")
+            }
+        }
+
+        impl<A, I, T> MapInit<A, I, False> for ValueThis<T> {
             type Result = Self;
             type Next = Self;
             type NextResult = Self;
@@ -306,16 +346,30 @@ pub mod test {
         pub bar: f32,
     }
 
+    use std::mem::MaybeUninit;
+
     use crate::{DonePartial, PartialThis};
 
     pub use should_be_generated_by_macro::*;
     mod should_be_generated_by_macro {
         use crate::{
             PartialThis,
-            chain::{self, BoxedThis, ScopedThis},
+            chain::{self, BoxedThis, ScopedThis, ValueThis},
         };
 
         use super::*;
+
+        impl PartialThis<std::mem::MaybeUninit<Self>> for Foo {
+            type Output = chain::Field<
+                false,
+                fields::bar,
+                chain::Field<false, fields::foo, chain::ValueThis<Foo>>,
+            >;
+
+            fn partial(this: std::mem::MaybeUninit<Self>) -> Self::Output {
+                chain::Field::uninit(chain::Field::uninit(ValueThis::new(this)))
+            }
+        }
 
         impl PartialThis<Box<std::mem::MaybeUninit<Self>>> for Foo {
             type Output = chain::Field<
@@ -494,6 +548,25 @@ pub mod test {
     #[test]
     fn test1() {
         let foo = Foo::partial(Box::new_uninit());
+        let mut a = foo.foo(1);
+        *a.foo_mut() = 123;
+        let foo = a.bar(456.0).done();
+        println!("r: {:?}", foo);
+    }
+
+    #[test]
+    fn test2() {
+        let mut foo = MaybeUninit::uninit();
+        let foo = Foo::partial(&mut foo);
+        let mut a = foo.foo(1);
+        *a.foo_mut() = 123;
+        let foo = a.bar(456.0).done();
+        println!("r: {:?}", foo);
+    }
+
+    #[test]
+    fn test3() {
+        let foo = Foo::partial(MaybeUninit::uninit());
         let mut a = foo.foo(1);
         *a.foo_mut() = 123;
         let foo = a.bar(456.0).done();

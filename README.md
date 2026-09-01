@@ -61,3 +61,12 @@ fn test()
   let p = p.field1(...);
   drop(p); // drop(field1) -> drop(field0) -> drop(Box<MaybeUninit<Some>>)
   ```
+- Multi overloads
+  ```rust
+  let foo: Box<T> = Foo::partial(Box::new_uninit()).done();
+
+  let foo: Foo = Foo::partial(MaybeUninit::uninit()).done();
+  
+  let mut foo = MaybeUninit::uninit();
+  let foo: &mut Foo = Foo::partial(&mut foo).done();
+  ```
