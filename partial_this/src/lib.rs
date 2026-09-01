@@ -1,3 +1,154 @@
+//! Type-safe partial construction.
+//!
+//! The [`partial`] attribute macro lets you build a struct field-by-field,
+//! while the type system guarantees that each field is initialized at most once
+//! and that [`done`](DonePartial::done) is only callable once every field has
+//! been set.
+//!
+//! # Example
+//!
+//! ```rust
+//! use partial_this::{partial, DonePartial, PartialThis};
+//!
+//! #[partial]
+//! #[derive(Debug)]
+//! pub struct Foo {
+//!     pub foo: i32,
+//!     pub bar: f32,
+//! }
+//!
+//! fn main() {
+//!     let foo = Foo::partial(Box::new_uninit())
+//!         .foo(1)
+//!         .bar(1.0)
+//!         .done();
+//!     assert_eq!(foo.foo, 1);
+//!     assert_eq!(foo.bar, 1.0);
+//! }
+//! ```
+//!
+//! # Multiple partial sources
+//!
+//! The initial storage can be a `Box`, an owned `MaybeUninit`, or a mutable
+//! reference, producing `Box<T>`, `T`, or `&mut T` respectively:
+//!
+//! ```rust
+//! use partial_this::{partial, DonePartial, PartialThis};
+//! use core::mem::MaybeUninit;
+//!
+//! #[partial]
+//! pub struct Foo {
+//!     pub foo: i32,
+//!     pub bar: f32,
+//! }
+//!
+//! fn main() {
+//!     let a: Box<Foo> = Foo::partial(Box::new_uninit()).foo(1).bar(2.0).done();
+//!     let b: Foo = Foo::partial(MaybeUninit::uninit()).foo(1).bar(2.0).done();
+//!     let mut buf = MaybeUninit::uninit();
+//!     let c: &mut Foo = Foo::partial(&mut buf).foo(1).bar(2.0).done();
+//!     let _ = (a, b, c);
+//! }
+//! ```
+//!
+//! # Field initialization
+//!
+//! Each field's builder method can be called in **any order**, but **at most
+//! once**:
+//!
+//! ```rust
+//! use partial_this::{partial, DonePartial, PartialThis};
+//!
+//! #[partial]
+//! pub struct Foo {
+//!     pub foo: i32,
+//!     pub bar: f32,
+//! }
+//!
+//! fn main() {
+//!     // Fields can be set in any order.
+//!     let p = Foo::partial(Box::new_uninit());
+//!     let p = p.bar(1.0);
+//!     let p = p.foo(1); // `foo` was not set yet, so this is allowed
+//!     let foo = p.done();
+//!     assert_eq!(foo.foo, 1);
+//!     assert_eq!(foo.bar, 1.0);
+//! }
+//! ```
+//!
+//! # Field access
+//!
+//! After a field is initialized you can read it or mutate it:
+//!
+//! ```rust
+//! use partial_this::{partial, DonePartial, PartialThis};
+//!
+//! #[partial]
+//! pub struct Foo {
+//!     pub foo: i32,
+//!     pub bar: f32,
+//! }
+//!
+//! fn main() {
+//!     let mut p = Foo::partial(Box::new_uninit()).foo(1);
+//!     assert_eq!(*p.foo(), 1);
+//!     *p.foo_mut() = 123;
+//!     let foo = p.bar(2.0).done();
+//!     assert_eq!(foo.foo, 123);
+//! }
+//! ```
+//!
+//! # Tuple and generic structs
+//!
+//! Tuple structs use `_0`, `_1`, ... as field method names; generic and
+//! lifetime-parameterized structs are also supported:
+//!
+//! ```rust
+//! use partial_this::{partial, DonePartial, PartialThis};
+//!
+//! #[partial]
+//! pub struct Bar(i32, f32);
+//!
+//! #[partial]
+//! pub struct Pair<'a, T> {
+//!     pub name: &'a str,
+//!     pub value: T,
+//! }
+//!
+//! fn main() {
+//!     let bar = Bar::partial(Box::new_uninit())._0(1)._1(2.0).done();
+//!     assert_eq!(bar.0, 1);
+//!     assert_eq!(bar.1, 2.0);
+//!
+//!     let pair = Pair::<String>::partial(Box::new_uninit())
+//!         .name("x")
+//!         .value(String::from("y"))
+//!         .done();
+//!     assert_eq!(pair.name, "x");
+//!     assert_eq!(pair.value, "y");
+//! }
+//! ```
+//!
+//! # Others
+//!
+//! - **Multiple partial sources**: `Box::new_uninit()`, `MaybeUninit::uninit()`
+//!   or `&mut MaybeUninit` all work as the initial storage.
+//! - **Field initialization methods**: each field has a builder method that can
+//!   be called in any order, and at most once (a second call is a compile time error).
+//! - **Field access methods**: after a field is initialized you can read it with
+//!   `field()` or get a mutable reference with `field_mut()`.
+//! - **`done()`**: finalizes the builder once every field is initialized.
+//! - **Drop safety**: partially-built values drop already-initialized fields in
+//!   declaration order.
+//! - **Field visibility**: `pub` fields are re-exported; private fields are
+//!   collected into a nested `private` module.
+//!
+//! # Safety
+//!
+//! The unsafe code in this crate is self-contained: it writes initialized fields
+//! into a [`MaybeUninit`] buffer and only assumes the target value is initialized
+//! after every field has been written.
+
 #![cfg_attr(not(test), no_std)]
 
 extern crate alloc;
@@ -18,12 +169,27 @@ pub use uninit_this::*;
 mod uninit_this {
     use super::*;
 
+    /// A source of uninitialized storage for a value of type
+    /// [`Target`](Self::Target).
+    ///
+    /// Implemented for `MaybeUninit<T>`, `&mut MaybeUninit<T>`,
+    /// `Box<MaybeUninit<T>>`, `Rc<MaybeUninit<T>>` and `Arc<MaybeUninit<T>>`.
+    /// Implementations expose the underlying [`MaybeUninit`](core::mem::MaybeUninit)
+    /// and allow assuming the storage has been initialized.
     pub trait UninitThis {
+        /// The type to be constructed.
         type Target;
+
+        /// The type produced once [`assume_init`](Self::assume_init) is called.
         type Inited;
 
+        /// Borrows the underlying uninitialized storage.
         unsafe fn get(&self) -> &MaybeUninit<Self::Target>;
+
+        /// Mutably borrows the underlying uninitialized storage.
         unsafe fn get_mut(&mut self) -> &mut MaybeUninit<Self::Target>;
+
+        /// Assumes the storage has been initialized and returns the value.
         unsafe fn assume_init(self) -> Self::Inited;
     }
 
@@ -110,20 +276,48 @@ mod uninit_this {
     }
 }
 
+/// A struct that can be partially constructed.
+///
+/// Implemented by the [`partial`] macro for a struct.
+/// [`partial`](Self::partial) starts the builder with some uninitialized
+/// storage (`this`), returning a [`chain::Field`] chain that can be filled
+/// field-by-field and finally finalized with [`DonePartial::done`].
 pub trait PartialThis<Src> {
+    /// The builder type returned from [`partial`](Self::partial).
     type Output;
+
+    /// Starts building a value of `Self` inside the given uninitialized storage.
     fn partial(this: Src) -> Self::Output;
 }
 
+/// Finalizes a partial builder once every field has been initialized.
+///
+/// Implemented for [`UninitThis`] sources and for [`chain::Field`] chains whose
+/// every field has been initialized (tracked at the type level).
 pub trait DonePartial {
+    /// The finalized, fully-initialized value.
     type Output;
 
+    /// Assumes the target value is initialized and returns it.
     fn done(self) -> Self::Output;
 }
 
+/// The type-level builder chain used by the `partial` macro.
+///
+/// Each struct field is represented as a [`Field`](crate::chain::Field) node;
+/// nodes are nested to form a linked list whose type encodes both the next field
+/// to initialize and which fields are currently initialized. The
+/// [`traits`](crate::chain::traits) module provides the field descriptors and
+/// chain-walking logic.
 pub mod chain {
     use super::*;
 
+    /// A node in the partial-construction chain.
+    ///
+    /// - `const INIT` tracks (at the type level) whether this node's field has
+    ///   been initialized.
+    /// - `F` is the field descriptor (implements [`traits::Field`]).
+    /// - `N` is the rest of the chain (the already-built part).
     #[derive(Debug)]
     pub struct Field<const INIT: bool, F, N>(N, PhantomData<(F, PhantomPinned)>)
     where
@@ -135,6 +329,7 @@ pub mod chain {
         F: traits::Field<Target = N::Target>,
         N: traits::ThisPtr,
     {
+        /// Wraps `next` as a chain node
         pub const fn keep(next: N) -> Self {
             Self(next, PhantomData)
         }
@@ -145,6 +340,7 @@ pub mod chain {
         F: traits::Field<Target = N::Target>,
         N: traits::ThisPtr,
     {
+        /// Marks the field as initialized and wraps the rest of the chain.
         pub const fn init(next: N) -> Self {
             Self(next, PhantomData)
         }
@@ -155,11 +351,13 @@ pub mod chain {
         F: traits::Field<Target = N::Target>,
         N: traits::ThisPtr,
     {
+        /// Marks the field as uninitialized and wraps the rest of the chain.
         pub const fn uninit(next: N) -> Self {
             Self(next, PhantomData)
         }
     }
 
+    /// Traits that describe struct fields and drive the chain-walking logic.
     pub mod traits {
         use typenum::{IsEqual, U0, Unsigned};
 
@@ -190,25 +388,43 @@ pub mod chain {
             }
         }
 
+        /// Describes a single struct field for the partial builder.
+        ///
+        /// Implemented by the `partial` macro for each field of the struct.
         pub trait Field {
+            /// The struct type that owns this field.
             type Target;
+            /// The field's type.
             type Type;
+            /// A unique type-level id for this field ([`typenum`] unsigned).
             type Id: Unsigned;
 
+            /// Drops the field's value if the type-level `INIT` flag is set.
             unsafe fn drop<const INIT: bool>(this: &mut MaybeUninit<Self::Target>);
 
+            /// Writes `value` into the field.
             unsafe fn init(this: &mut MaybeUninit<Self::Target>, value: Self::Type);
 
+            /// Borrows the initialized field value.
             unsafe fn get(this: &MaybeUninit<Self::Target>) -> &Self::Type;
+
+            /// Mutably borrows the initialized field value.
             unsafe fn get_mut(this: &mut MaybeUninit<Self::Target>) -> &mut Self::Type;
         }
 
+        /// Provides access to the underlying uninitialized storage of a chain node.
         pub trait ThisPtr {
+            /// The struct type being constructed.
             type Target;
+            /// The field id of this node.
             type Id: Unsigned;
+            /// The field id of the next node in the chain.
             type NextId: Unsigned;
 
+            /// Borrows the underlying `MaybeUninit` storage.
             fn this(this: &Self) -> &MaybeUninit<Self::Target>;
+
+            /// Mutably borrows the underlying `MaybeUninit` storage.
             fn this_mut(this: &mut Self) -> &mut MaybeUninit<Self::Target>;
         }
 
@@ -252,12 +468,22 @@ pub mod chain {
             }
         }
 
+        /// Drives a field-initialization operation across the chain.
+        ///
+        /// Given the value type `A`, the field id `I`, and the current chain
+        /// context `C`, it returns a chain where the field has been initialized.
         pub trait MapInit<A, I, C>: ThisPtr {
+            /// The resulting chain after initialization.
             type Result: ThisPtr<Target = Self::Target>;
+            /// The rest of the chain.
             type Next;
+            /// The rest of the chain after initialization.
             type NextResult;
 
+            /// Initializes the field with `value`, returning the new chain.
             unsafe fn map_init(this: Self, value: A) -> Self::Result;
+
+            /// Marks the field initialized without writing a value.
             unsafe fn assume_init(this: Self) -> Self::Result;
         }
 
@@ -334,8 +560,15 @@ pub mod chain {
             }
         }
 
+        /// Reads an already-initialized field's value from the chain.
+        ///
+        /// Given the value type `A`, the field id `I` and the chain context `C`,
+        /// returns a reference to the initialized field.
         pub trait GetField<A, I, C>: ThisPtr {
+            /// Borrows the initialized field value.
             unsafe fn get<'a>(this: &'a Self) -> &'a A;
+
+            /// Mutably borrows the initialized field value.
             unsafe fn get_mut<'a>(this: &'a mut Self) -> &'a mut A;
         }
 

@@ -4,6 +4,7 @@ Type-safe partial construction
 
 ```rust
 
+#[partial]
 #[derive(Debug)]
 pub struct Foo {
     pub foo: i32,
