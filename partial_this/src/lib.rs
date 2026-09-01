@@ -1,9 +1,109 @@
-use std::{
+#![cfg_attr(not(test), no_std)]
+
+extern crate alloc;
+
+use alloc::{boxed::Box, rc::Rc, sync::Arc};
+use core::{
     marker::{PhantomData, PhantomPinned},
     mem::{ManuallyDrop, MaybeUninit},
 };
-
 use typenum::{False, True};
+
+pub use uninit_this::*;
+mod uninit_this {
+    use super::*;
+
+    pub trait UninitThis {
+        type Target;
+        type Inited;
+
+        unsafe fn get(&self) -> &MaybeUninit<Self::Target>;
+        unsafe fn get_mut(&mut self) -> &mut MaybeUninit<Self::Target>;
+        unsafe fn assume_init(self) -> Self::Inited;
+    }
+
+    impl<'a, T> UninitThis for &'a mut MaybeUninit<T> {
+        type Target = T;
+
+        type Inited = &'a mut T;
+
+        unsafe fn assume_init(self) -> Self::Inited {
+            unsafe { self.assume_init_mut() }
+        }
+
+        unsafe fn get(&self) -> &MaybeUninit<Self::Target> {
+            self
+        }
+
+        unsafe fn get_mut(&mut self) -> &mut MaybeUninit<Self::Target> {
+            self
+        }
+    }
+    impl<T> UninitThis for MaybeUninit<T> {
+        type Target = T;
+        type Inited = T;
+
+        unsafe fn assume_init(self) -> Self::Inited {
+            unsafe { self.assume_init() }
+        }
+
+        unsafe fn get(&self) -> &MaybeUninit<Self::Target> {
+            self
+        }
+
+        unsafe fn get_mut(&mut self) -> &mut MaybeUninit<Self::Target> {
+            self
+        }
+    }
+    impl<T> UninitThis for Box<MaybeUninit<T>> {
+        type Target = T;
+        type Inited = Box<T>;
+
+        unsafe fn assume_init(self) -> Self::Inited {
+            unsafe { self.assume_init() }
+        }
+
+        unsafe fn get(&self) -> &MaybeUninit<Self::Target> {
+            self
+        }
+
+        unsafe fn get_mut(&mut self) -> &mut MaybeUninit<Self::Target> {
+            self
+        }
+    }
+    impl<T> UninitThis for Rc<MaybeUninit<T>> {
+        type Target = T;
+        type Inited = Rc<T>;
+
+        unsafe fn assume_init(self) -> Self::Inited {
+            unsafe { self.assume_init() }
+        }
+
+        unsafe fn get(&self) -> &MaybeUninit<Self::Target> {
+            self
+        }
+
+        unsafe fn get_mut(&mut self) -> &mut MaybeUninit<Self::Target> {
+            Rc::get_mut(self).unwrap()
+        }
+    }
+    impl<T> UninitThis for Arc<MaybeUninit<T>> {
+        type Target = T;
+        type Inited = Arc<T>;
+
+        unsafe fn assume_init(self) -> Self::Inited {
+            unsafe { self.assume_init() }
+        }
+
+        unsafe fn get(&self) -> &MaybeUninit<Self::Target> {
+            self
+        }
+
+        unsafe fn get_mut(&mut self) -> &mut MaybeUninit<Self::Target> {
+            Arc::get_mut(self).unwrap()
+        }
+    }
+}
 
 pub trait PartialThis<Src> {
     type Output;
@@ -18,33 +118,6 @@ pub trait DonePartial {
 
 pub mod chain {
     use super::*;
-
-    #[derive(Debug)]
-    pub struct ScopedThis<'a, T>(&'a mut MaybeUninit<T>);
-
-    impl<'a, T> ScopedThis<'a, T> {
-        pub const fn new(this: &'a mut MaybeUninit<T>) -> Self {
-            Self(this)
-        }
-    }
-
-    #[derive(Debug)]
-    pub struct ValueThis<T>(MaybeUninit<T>);
-
-    impl<T> ValueThis<T> {
-        pub const fn new(this: MaybeUninit<T>) -> Self {
-            Self(this)
-        }
-    }
-
-    #[derive(Debug)]
-    pub struct BoxedThis<T>(Box<MaybeUninit<T>>);
-
-    impl<T> BoxedThis<T> {
-        pub const fn new(this: Box<MaybeUninit<T>>) -> Self {
-            Self(this)
-        }
-    }
 
     #[derive(Debug)]
     pub struct Field<const INIT: bool, F, N>(N, PhantomData<(F, PhantomPinned)>)
@@ -87,27 +160,11 @@ pub mod chain {
 
         use super::*;
 
-        impl<'a, T> DonePartial for ScopedThis<'a, T> {
-            type Output = &'a mut T;
+        impl<U: UninitThis> DonePartial for U {
+            type Output = U::Inited;
 
             fn done(self) -> Self::Output {
-                unsafe { self.0.assume_init_mut() }
-            }
-        }
-
-        impl<T> DonePartial for ValueThis<T> {
-            type Output = T;
-
-            fn done(self) -> Self::Output {
-                unsafe { self.0.assume_init() }
-            }
-        }
-
-        impl<T> DonePartial for BoxedThis<T> {
-            type Output = Box<T>;
-
-            fn done(self) -> Self::Output {
-                unsafe { self.0.assume_init() }
+                unsafe { self.assume_init() }
             }
         }
 
@@ -150,42 +207,16 @@ pub mod chain {
             fn this_mut(this: &mut Self) -> &mut MaybeUninit<Self::Target>;
         }
 
-        impl<'a, T> ThisPtr for ScopedThis<'a, T> {
+        impl<U: UninitThis> ThisPtr for U {
             type Id = U0;
             type NextId = U0;
-            type Target = T;
+            type Target = U::Target;
 
             fn this(this: &Self) -> &MaybeUninit<Self::Target> {
-                &this.0
+                unsafe { this.get() }
             }
             fn this_mut(this: &mut Self) -> &mut MaybeUninit<Self::Target> {
-                &mut this.0
-            }
-        }
-
-        impl<T> ThisPtr for ValueThis<T> {
-            type Id = U0;
-            type NextId = U0;
-            type Target = T;
-
-            fn this(this: &Self) -> &MaybeUninit<Self::Target> {
-                &this.0
-            }
-            fn this_mut(this: &mut Self) -> &mut MaybeUninit<Self::Target> {
-                &mut this.0
-            }
-        }
-
-        impl<T> ThisPtr for BoxedThis<T> {
-            type Id = U0;
-            type NextId = U0;
-            type Target = T;
-
-            fn this(this: &Self) -> &MaybeUninit<Self::Target> {
-                &this.0
-            }
-            fn this_mut(this: &mut Self) -> &mut MaybeUninit<Self::Target> {
-                &mut this.0
+                unsafe { this.get_mut() }
             }
         }
 
@@ -222,9 +253,10 @@ pub mod chain {
             type NextResult;
 
             unsafe fn map_init(this: Self, value: A) -> Self::Result;
+            unsafe fn assume_init(this: Self) -> Self::Result;
         }
 
-        impl<'a, A, I, T> MapInit<A, I, False> for ScopedThis<'a, T> {
+        impl<A, I, T, U: UninitThis<Target = T>> MapInit<A, I, False> for U {
             type Result = Self;
             type Next = Self;
             type NextResult = Self;
@@ -232,24 +264,8 @@ pub mod chain {
             unsafe fn map_init(_this: Self, _value: A) -> Self::Result {
                 unreachable!("never")
             }
-        }
 
-        impl<A, I, T> MapInit<A, I, False> for ValueThis<T> {
-            type Result = Self;
-            type Next = Self;
-            type NextResult = Self;
-
-            unsafe fn map_init(_this: Self, _value: A) -> Self::Result {
-                unreachable!("never")
-            }
-        }
-
-        impl<A, I, T> MapInit<A, I, False> for BoxedThis<T> {
-            type Result = Self;
-            type Next = Self;
-            type NextResult = Self;
-
-            unsafe fn map_init(_this: Self, _value: A) -> Self::Result {
+            unsafe fn assume_init(_this: Self) -> Self::Result {
                 unreachable!("never")
             }
         }
@@ -274,6 +290,14 @@ pub mod chain {
                     super::Field::keep(N::map_init(n, value))
                 }
             }
+
+            unsafe fn assume_init(this: Self) -> Self::Result {
+                unsafe {
+                    let this = ManuallyDrop::new(this);
+                    let n = core::ptr::read(&this.0);
+                    super::Field::keep(N::assume_init(n))
+                }
+            }
         }
 
         impl<A, F, I, N> MapInit<A, I, True> for super::Field<false, F, N>
@@ -290,6 +314,14 @@ pub mod chain {
             unsafe fn map_init(mut this: Self, value: A) -> Self::Result {
                 unsafe {
                     F::init(Self::this_mut(&mut this), value);
+                    let this = ManuallyDrop::new(this);
+                    let n = core::ptr::read(&this.0);
+                    super::Field::init(n)
+                }
+            }
+
+            unsafe fn assume_init(this: Self) -> Self::Result {
+                unsafe {
                     let this = ManuallyDrop::new(this);
                     let n = core::ptr::read(&this.0);
                     super::Field::init(n)
@@ -346,52 +378,23 @@ pub mod test {
         pub bar: f32,
     }
 
-    use std::mem::MaybeUninit;
-
     use crate::{DonePartial, PartialThis};
+    use core::mem::MaybeUninit;
 
     pub use should_be_generated_by_macro::*;
     mod should_be_generated_by_macro {
         use crate::{
-            PartialThis,
-            chain::{self, BoxedThis, ScopedThis, ValueThis},
+            PartialThis, UninitThis,
+            chain::{self},
         };
 
         use super::*;
 
-        impl PartialThis<std::mem::MaybeUninit<Self>> for Foo {
-            type Output = chain::Field<
-                false,
-                fields::bar,
-                chain::Field<false, fields::foo, chain::ValueThis<Foo>>,
-            >;
+        impl<U: UninitThis<Target = Foo>> PartialThis<U> for Foo {
+            type Output = chain::Field<false, fields::bar, chain::Field<false, fields::foo, U>>;
 
-            fn partial(this: std::mem::MaybeUninit<Self>) -> Self::Output {
-                chain::Field::uninit(chain::Field::uninit(ValueThis::new(this)))
-            }
-        }
-
-        impl PartialThis<Box<std::mem::MaybeUninit<Self>>> for Foo {
-            type Output = chain::Field<
-                false,
-                fields::bar,
-                chain::Field<false, fields::foo, chain::BoxedThis<Foo>>,
-            >;
-
-            fn partial(this: Box<std::mem::MaybeUninit<Self>>) -> Self::Output {
-                chain::Field::uninit(chain::Field::uninit(BoxedThis::new(this)))
-            }
-        }
-
-        impl<'a> PartialThis<&'a mut std::mem::MaybeUninit<Self>> for Foo {
-            type Output = chain::Field<
-                false,
-                fields::bar,
-                chain::Field<false, fields::foo, chain::ScopedThis<'a, Foo>>,
-            >;
-
-            fn partial(this: &'a mut std::mem::MaybeUninit<Self>) -> Self::Output {
-                chain::Field::uninit(chain::Field::uninit(ScopedThis::new(this)))
+            fn partial(this: U) -> Self::Output {
+                chain::Field::uninit(chain::Field::uninit(this))
             }
         }
 
@@ -465,10 +468,12 @@ pub mod test {
             pub trait Foo_uninit_foo<T> {
                 type Output;
                 fn foo(self, value: i32) -> Self::Output;
+                fn assume_init_foo(self) -> Self::Output;
             }
             pub trait Foo_uninit_bar<T> {
                 type Output;
                 fn bar(self, value: f32) -> Self::Output;
+                fn assume_init_bar(self) -> Self::Output;
             }
 
             impl<const INIT: bool, F, N, C> Foo_uninit_foo<C> for chain::Field<INIT, F, N>
@@ -482,6 +487,10 @@ pub mod test {
                 fn foo(self, value: i32) -> Self::Output {
                     unsafe { Self::map_init(self, value) }
                 }
+
+                fn assume_init_foo(self) -> Self::Output {
+                    unsafe { Self::assume_init(self) }
+                }
             }
 
             impl<const INIT: bool, F, N, C> Foo_uninit_bar<C> for chain::Field<INIT, F, N>
@@ -494,6 +503,10 @@ pub mod test {
 
                 fn bar(self, value: f32) -> Self::Output {
                     unsafe { Self::map_init(self, value) }
+                }
+
+                fn assume_init_bar(self) -> Self::Output {
+                    unsafe { Self::assume_init(self) }
                 }
             }
         }
