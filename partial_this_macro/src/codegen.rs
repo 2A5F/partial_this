@@ -1,4 +1,4 @@
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::{Literal, Span, TokenStream};
 use quote::{format_ident, quote};
 use std::collections::HashSet;
 use syn::{Error, Fields, GenericParam, Ident, ItemStruct, Type, parse_quote};
@@ -49,7 +49,7 @@ pub(crate) fn generate(item: &ItemStruct, cfg: &PartialConfig) -> syn::Result<To
     let mut output_ty = quote!(#u);
     let mut ctor = quote!(this);
     for f in &fields {
-        let fname = &f.ident;
+        let fname = &f.name;
         output_ty = quote!(chain::Field<false, fields::#fname #struct_ty_generics, #output_ty>);
         ctor = quote!(chain::Field::uninit(#ctor));
     }
@@ -104,37 +104,58 @@ pub(crate) fn generate(item: &ItemStruct, cfg: &PartialConfig) -> syn::Result<To
     })
 }
 
-/// Collects the named fields of a struct with their 1-based index.
+/// A field of the struct, with the data needed to generate its impls.
 struct FieldInfo {
-    ident: Ident,
+    /// Identifier used for generated method and marker names (`foo` for named
+    /// fields, `_0`/`_1` for tuple fields).
+    name: Ident,
+    /// Token used to access the field on the struct (`foo` for named fields,
+    /// `0`/`1` for tuple fields).
+    access: TokenStream,
     ty: Type,
     index: usize,
 }
 
 fn collect_fields(item: &ItemStruct) -> syn::Result<Vec<FieldInfo>> {
-    let named = match &item.fields {
-        Fields::Named(named) => named.named.iter().collect::<Vec<_>>(),
-        _ => {
-            return Err(Error::new_spanned(
-                item,
-                "`partial` only supports structs with named fields",
-            ));
-        }
-    };
+    let mut fields = Vec::new();
 
-    let mut fields = Vec::with_capacity(named.len());
-    for (i, field) in named.into_iter().enumerate() {
-        let ident = field
-            .ident
-            .clone()
-            .ok_or_else(|| Error::new_spanned(field, "field is missing an identifier"))?;
-        // Field indices start at `U1`.
-        fields.push(FieldInfo {
-            ident,
-            ty: field.ty.clone(),
-            index: i + 1,
-        });
+    match &item.fields {
+        Fields::Named(named) => {
+            for (i, field) in named.named.iter().enumerate() {
+                let name = field
+                    .ident
+                    .clone()
+                    .ok_or_else(|| Error::new_spanned(field, "field is missing an identifier"))?;
+                let access = quote!(#name);
+                // Field indices start at `U1`.
+                fields.push(FieldInfo {
+                    name,
+                    access,
+                    ty: field.ty.clone(),
+                    index: i + 1,
+                });
+            }
+        }
+        Fields::Unnamed(unnamed) => {
+            for (i, field) in unnamed.unnamed.iter().enumerate() {
+                let name = format_ident!("_{}", i);
+                // Tuple fields are accessed by an unsuffixed numeric index.
+                let access = {
+                    let lit = Literal::usize_unsuffixed(i);
+                    quote!(#lit)
+                };
+                // Field indices start at `U1`.
+                fields.push(FieldInfo {
+                    name,
+                    access,
+                    ty: field.ty.clone(),
+                    index: i + 1,
+                });
+            }
+        }
+        Fields::Unit => {}
     }
+
     Ok(fields)
 }
 
@@ -155,7 +176,8 @@ fn gen_fields_module(
     let mut defs = TokenStream::new();
 
     for f in fields {
-        let fname = &f.ident;
+        let fname = &f.name;
+        let access = &f.access;
         let fty = &f.ty;
         let uid = format_ident!("U{}", f.index);
 
@@ -186,7 +208,7 @@ fn gen_fields_module(
                     this: &mut ::core::mem::MaybeUninit<Self::Target>,
                 ) {
                     if #init {
-                        unsafe { ::core::ptr::drop_in_place(&mut (*this.as_mut_ptr()).#fname) };
+                        unsafe { ::core::ptr::drop_in_place(&mut (*this.as_mut_ptr()).#access) };
                     }
                 }
 
@@ -194,19 +216,19 @@ fn gen_fields_module(
                     this: &mut ::core::mem::MaybeUninit<Self::Target>,
                     v: Self::Type,
                 ) {
-                    unsafe { ::core::ptr::write(&mut (*this.as_mut_ptr()).#fname, v) }
+                    unsafe { ::core::ptr::write(&mut (*this.as_mut_ptr()).#access, v) }
                 }
 
                 unsafe fn get(
                     this: &::core::mem::MaybeUninit<Self::Target>,
                 ) -> &Self::Type {
-                    unsafe { &(*this.as_ptr()).#fname }
+                    unsafe { &(*this.as_ptr()).#access }
                 }
 
                 unsafe fn get_mut(
                     this: &mut ::core::mem::MaybeUninit<Self::Target>,
                 ) -> &mut Self::Type {
-                    unsafe { &mut (*this.as_mut_ptr()).#fname }
+                    unsafe { &mut (*this.as_mut_ptr()).#access }
                 }
             }
         });
@@ -233,7 +255,7 @@ fn gen_uninit_module(
     let c = &names.c;
 
     for fld in fields {
-        let fname = &fld.ident;
+        let fname = &fld.name;
         let fty = &fld.ty;
         let uid = format_ident!("U{}", fld.index);
         let trait_name = format_ident!("{}_uninit_{}", struct_ident, fname);
@@ -300,7 +322,7 @@ fn gen_inited_module(
     let c = &names.c;
 
     for fld in fields {
-        let fname = &fld.ident;
+        let fname = &fld.name;
         let fty = &fld.ty;
         let uid = format_ident!("U{}", fld.index);
         let trait_name = format_ident!("{}_inited_{}", struct_ident, fname);

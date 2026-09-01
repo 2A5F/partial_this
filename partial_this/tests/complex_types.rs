@@ -137,3 +137,36 @@ mod generic_name_collision {
         assert_eq!(r.data, [0u8; 4]);
     }
 }
+
+mod tuple_struct {
+    use partial_this::{DonePartial, PartialThis, partial};
+
+    #[partial]
+    pub struct Tuple(i32, f32);
+
+    #[test]
+    fn builds_tuple() {
+        let p = Tuple::partial(Box::new_uninit());
+        let mut a = p._0(1);
+        *a._0_mut() = 123;
+        let r = a._1(456.0).done();
+        assert_eq!(r.0, 123);
+        assert_eq!(r.1, 456.0);
+    }
+}
+
+mod generic_tuple {
+    use partial_this::{DonePartial, PartialThis, partial};
+
+    #[partial]
+    pub struct GenTuple<T, U>(pub T, pub U);
+
+    #[test]
+    fn builds_generic_tuple() {
+        let p = GenTuple::<String, i32>::partial(Box::new_uninit());
+        let a = p._0(String::from("x"));
+        let r = a._1(1).done();
+        assert_eq!(r.0, "x");
+        assert_eq!(r.1, 1);
+    }
+}
