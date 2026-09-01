@@ -75,10 +75,14 @@ pub(crate) fn generate(item: &ItemStruct, cfg: &PartialConfig) -> syn::Result<To
     //   `use <mod>::private::*`, keeping them module-local by default.
     let mut re_exports = TokenStream::new();
     let mut private_traits: Vec<Ident> = Vec::new();
+    let mut all_uninit_traits: Vec<Ident> = Vec::new();
+    let mut all_inited_traits: Vec<Ident> = Vec::new();
 
     for f in &fields {
         let uninit_trait = format_ident!("{}_uninit_{}", struct_ident, f.name);
         let inited_trait = format_ident!("{}_inited_{}", struct_ident, f.name);
+        all_uninit_traits.push(uninit_trait.clone());
+        all_inited_traits.push(inited_trait.clone());
         if f.is_pub {
             if cfg.pub_use() {
                 re_exports.extend(quote! {
@@ -91,6 +95,25 @@ pub(crate) fn generate(item: &ItemStruct, cfg: &PartialConfig) -> syn::Result<To
             private_traits.push(inited_trait);
         }
     }
+
+    // Re-export traits into the generated module with explicit lists (no globs),
+    // avoiding ambiguous-import-visibility lints.
+    let uninit_reexport = if all_uninit_traits.is_empty() {
+        TokenStream::new()
+    } else {
+        quote! {
+            #[allow(unused_imports)]
+            pub use uninit_fields::{#(#all_uninit_traits),*};
+        }
+    };
+    let inited_reexport = if all_inited_traits.is_empty() {
+        TokenStream::new()
+    } else {
+        quote! {
+            #[allow(unused_imports)]
+            pub use inited_fields::{#(#all_inited_traits),*};
+        }
+    };
 
     // The nested `private` module collects the private-field traits; it is always
     // emitted (when there are private fields) so users can re-export it via
@@ -110,7 +133,7 @@ pub(crate) fn generate(item: &ItemStruct, cfg: &PartialConfig) -> syn::Result<To
     if !private_traits.is_empty() && cfg.pub_use() {
         re_exports.extend(quote! {
             #[allow(unused_imports)]
-            use #module_ident::private::*;
+            use #module_ident::private::{#(#private_traits),*};
         });
     }
 
@@ -119,7 +142,7 @@ pub(crate) fn generate(item: &ItemStruct, cfg: &PartialConfig) -> syn::Result<To
         #[allow(nonstandard_style)]
         mod #module_ident {
             use ::#krate::{ PartialThis, UninitThis, chain::{self} };
-            use super::*;
+            use super::#struct_ident;
 
             impl #partial_impl_generics PartialThis<#u> for #struct_type #partial_where {
                 type Output = #output_ty;
@@ -134,16 +157,16 @@ pub(crate) fn generate(item: &ItemStruct, cfg: &PartialConfig) -> syn::Result<To
                 #fields_defs
             }
 
-            pub use uninit_fields::*;
+            #uninit_reexport
             mod uninit_fields {
-                use super::*;
+                use super::#struct_ident;
                 use ::#krate::chain::{self, traits::MapInit};
                 #uninit_defs
             }
 
-            pub use inited_fields::*;
+            #inited_reexport
             mod inited_fields {
-                use super::*;
+                use super::#struct_ident;
                 use ::#krate::chain::{self, traits::GetField};
                 #inited_defs
             }
