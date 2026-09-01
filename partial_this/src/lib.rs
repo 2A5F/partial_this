@@ -1,6 +1,7 @@
 #![cfg_attr(not(test), no_std)]
 
 extern crate alloc;
+extern crate self as partial_this;
 
 use alloc::{boxed::Box, rc::Rc, sync::Arc};
 use core::{
@@ -600,5 +601,15 @@ pub mod test1 {
     pub struct Foo {
         pub foo: i32,
         pub bar: f32,
+    }
+
+    #[test]
+    fn macro_generates_partial() {
+        let foo = Foo::partial(Box::new_uninit());
+        let mut a = foo.foo(1);
+        *a.foo_mut() = 123;
+        let foo = a.bar(456.0).done();
+        assert_eq!(foo.foo, 123);
+        assert_eq!(foo.bar, 456.0);
     }
 }

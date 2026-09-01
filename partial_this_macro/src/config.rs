@@ -1,16 +1,25 @@
+use proc_macro2::Span;
 use syn::{
     Expr, ExprLit, Ident, ItemStruct, Lit, Meta, Token,
     parse::{Parse, ParseStream},
 };
 
+/// The crate name used by default in generated paths.
+const DEFAULT_CRATE_NAME: &str = "partial_this";
+
 /// Config parsed from the `#[partial(...)]` attribute arguments.
 ///
 /// The syntax is `key = value`, with multiple configs separated by commas, e.g.
-/// `#[partial(module = foo)]`.
+/// `#[partial(module = foo, crate_name = my_crate)]`.
 #[derive(Debug, Default)]
 pub(crate) struct PartialConfig {
     /// Name of the module that holds the generated output.
     module: Option<Ident>,
+    /// Name of the crate that exposes `PartialThis`/`chain`/`typenum`.
+    ///
+    /// Defaults to `partial_this`; set it to the dependency alias when the
+    /// `partial_this` crate is renamed in `Cargo.toml`.
+    crate_name: Option<Ident>,
 }
 
 impl PartialConfig {
@@ -23,6 +32,13 @@ impl PartialConfig {
             Ident::new(&format!("{snake}_partial"), struct_name.span())
         });
         name
+    }
+
+    /// Returns the crate name used to build absolute paths in the generated code.
+    pub(crate) fn crate_name(&self) -> Ident {
+        self.crate_name
+            .clone()
+            .unwrap_or_else(|| Ident::new(DEFAULT_CRATE_NAME, Span::call_site()))
     }
 }
 
@@ -43,7 +59,8 @@ impl Parse for PartialConfig {
             };
 
             match key.to_string().as_str() {
-                "module" => config.module = Some(parse_module_ident(&nv.value)?),
+                "module" => config.module = Some(parse_ident(&nv.value)?),
+                "crate_name" => config.crate_name = Some(parse_ident(&nv.value)?),
                 _ => {
                     return Err(syn::Error::new_spanned(
                         key,
@@ -57,9 +74,9 @@ impl Parse for PartialConfig {
     }
 }
 
-/// Parses a module name, accepting either a bare identifier (e.g. `foo`) or a
+/// Parses an identifier, accepting either a bare identifier (e.g. `foo`) or a
 /// string literal (e.g. `"foo"`).
-fn parse_module_ident(expr: &Expr) -> syn::Result<Ident> {
+fn parse_ident(expr: &Expr) -> syn::Result<Ident> {
     match expr {
         Expr::Path(path) if path.path.segments.len() == 1 => {
             Ok(path.path.segments[0].ident.clone())
@@ -70,8 +87,7 @@ fn parse_module_ident(expr: &Expr) -> syn::Result<Ident> {
             .map_err(|e| syn::Error::new(s.span(), e.to_string())),
         _ => Err(syn::Error::new_spanned(
             expr,
-            "module name must be an identifier or string literal, \
-             e.g. `module = foo` or `module = \"foo\"`",
+            "expected an identifier or string literal",
         )),
     }
 }
@@ -129,6 +145,24 @@ mod tests {
     fn rejects_non_key_value() {
         let result = parse2::<PartialConfig>("foo".parse().unwrap());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parses_crate_name_ident() {
+        let cfg = parse("crate_name = my_alias");
+        assert_eq!(cfg.crate_name().to_string(), "my_alias");
+    }
+
+    #[test]
+    fn parses_crate_name_string() {
+        let cfg = parse("crate_name = \"my_alias\"");
+        assert_eq!(cfg.crate_name().to_string(), "my_alias");
+    }
+
+    #[test]
+    fn defaults_crate_name() {
+        let cfg = parse("");
+        assert_eq!(cfg.crate_name().to_string(), "partial_this");
     }
 
     #[test]
