@@ -1,0 +1,3 @@
+[workspace]
+members = ["partial_this"]
+resolver = "3"

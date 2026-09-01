@@ -1,0 +1,7 @@
+[package]
+edition = "2024"
+name = "partial_this"
+version = "0.1.0"
+
+[dependencies]
+typenum = "1.20"
