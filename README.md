@@ -17,8 +17,7 @@ pub struct Foo {
     pub bar: f32,
 }
 
-fn test()
-{
+fn test() {
     let p = Foo::partial(Box::new_uninit());
     let p = p.foo(1);
     let p = p.bar(1.0);
