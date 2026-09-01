@@ -10,7 +10,7 @@ const DEFAULT_CRATE_NAME: &str = "partial_this";
 /// Config parsed from the `#[partial(...)]` attribute arguments.
 ///
 /// The syntax is `key = value`, with multiple configs separated by commas, e.g.
-/// `#[partial(module = foo, crate_name = my_crate)]`.
+/// `#[partial(module = foo, crate_name = my_crate, pub_use = false)]`.
 #[derive(Debug, Default)]
 pub(crate) struct PartialConfig {
     /// Name of the module that holds the generated output.
@@ -20,6 +20,9 @@ pub(crate) struct PartialConfig {
     /// Defaults to `partial_this`; set it to the dependency alias when the
     /// `partial_this` crate is renamed in `Cargo.toml`.
     crate_name: Option<Ident>,
+    /// Whether to emit the `use`/`pub use` re-exports of the generated builder
+    /// and accessor traits. Defaults to `true`.
+    pub_use: Option<bool>,
 }
 
 impl PartialConfig {
@@ -39,6 +42,11 @@ impl PartialConfig {
         self.crate_name
             .clone()
             .unwrap_or_else(|| Ident::new(DEFAULT_CRATE_NAME, Span::call_site()))
+    }
+
+    /// Whether the generated builder/accessor traits should be re-exported.
+    pub(crate) fn pub_use(&self) -> bool {
+        self.pub_use.unwrap_or(true)
     }
 }
 
@@ -61,6 +69,7 @@ impl Parse for PartialConfig {
             match key.to_string().as_str() {
                 "module" => config.module = Some(parse_ident(&nv.value)?),
                 "crate_name" => config.crate_name = Some(parse_ident(&nv.value)?),
+                "pub_use" => config.pub_use = Some(parse_bool(&nv.value)?),
                 _ => {
                     return Err(syn::Error::new_spanned(
                         key,
@@ -71,6 +80,16 @@ impl Parse for PartialConfig {
         }
 
         Ok(config)
+    }
+}
+
+/// Parses a boolean literal (`true`/`false`).
+fn parse_bool(expr: &Expr) -> syn::Result<bool> {
+    match expr {
+        Expr::Lit(ExprLit {
+            lit: Lit::Bool(b), ..
+        }) => Ok(b.value),
+        _ => Err(syn::Error::new_spanned(expr, "expected `true` or `false`")),
     }
 }
 
@@ -163,6 +182,18 @@ mod tests {
     fn defaults_crate_name() {
         let cfg = parse("");
         assert_eq!(cfg.crate_name().to_string(), "partial_this");
+    }
+
+    #[test]
+    fn defaults_pub_use_true() {
+        let cfg = parse("");
+        assert!(cfg.pub_use());
+    }
+
+    #[test]
+    fn parses_pub_use_false() {
+        let cfg = parse("pub_use = false");
+        assert!(!cfg.pub_use());
     }
 
     #[test]

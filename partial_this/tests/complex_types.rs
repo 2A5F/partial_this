@@ -170,3 +170,65 @@ mod generic_tuple {
         assert_eq!(r.1, 1);
     }
 }
+
+mod private_field {
+    use partial_this::{DonePartial, PartialThis, partial};
+
+    #[partial]
+    pub struct Mixed {
+        pub a: i32,
+        b: f32,
+    }
+
+    #[test]
+    fn builds() {
+        let p = Mixed::partial(Box::new_uninit());
+        let x = p.a(1);
+        let r = x.b(2.0).done();
+        assert_eq!(r.a, 1);
+        assert_eq!(r.b, 2.0);
+    }
+}
+
+mod no_pub_use {
+    use partial_this::{DonePartial, PartialThis, partial};
+
+    #[partial(pub_use = false)]
+    pub struct NoExport {
+        pub a: i32,
+    }
+
+    #[test]
+    fn builds() {
+        // With `pub_use = false` the builder trait is not auto-imported; bring
+        // it into scope explicitly.
+        use no_export_partial::NoExport_uninit_a;
+        let p = NoExport::partial(Box::new_uninit());
+        let r = p.a(1).done();
+        assert_eq!(r.a, 1);
+    }
+}
+
+mod private_module_export {
+    use partial_this::{DonePartial, PartialThis, partial};
+
+    #[partial(pub_use = false)]
+    pub struct Holder {
+        pub a: i32,
+        b: f32,
+    }
+
+    #[test]
+    fn builds() {
+        // With `pub_use = false` nothing is auto-imported. Bring the public
+        // field trait from the generated module and the private exports from
+        // the nested `private` module.
+        use holder_partial::Holder_uninit_a;
+        #[allow(unused_imports)]
+        use holder_partial::private::*;
+        let p = Holder::partial(Box::new_uninit());
+        let r = p.a(1).b(2.0).done();
+        assert_eq!(r.a, 1);
+        assert_eq!(r.b, 2.0);
+    }
+}

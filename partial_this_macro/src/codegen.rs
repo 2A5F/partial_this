@@ -67,6 +67,53 @@ pub(crate) fn generate(item: &ItemStruct, cfg: &PartialConfig) -> syn::Result<To
     let uninit_defs = gen_uninit_module(&krate, item, &fields, &struct_type, &names);
     let inited_defs = gen_inited_module(&krate, item, &fields, &struct_type, &names);
 
+    // Re-export the builder/accessor traits.
+    //
+    // - Public fields are re-exported with `pub use`.
+    // - Private fields are collected into a nested `private` module inside the
+    //   generated module, and brought into the current module with a plain
+    //   `use <mod>::private::*`, keeping them module-local by default.
+    let mut re_exports = TokenStream::new();
+    let mut private_traits: Vec<Ident> = Vec::new();
+
+    for f in &fields {
+        let uninit_trait = format_ident!("{}_uninit_{}", struct_ident, f.name);
+        let inited_trait = format_ident!("{}_inited_{}", struct_ident, f.name);
+        if f.is_pub {
+            if cfg.pub_use() {
+                re_exports.extend(quote! {
+                    #[allow(unused_imports)]
+                    pub use #module_ident::{#uninit_trait, #inited_trait};
+                });
+            }
+        } else {
+            private_traits.push(uninit_trait);
+            private_traits.push(inited_trait);
+        }
+    }
+
+    // The nested `private` module collects the private-field traits; it is always
+    // emitted (when there are private fields) so users can re-export it via
+    // `pub use <mod>::private::*` if they wish.
+    let private_module = if private_traits.is_empty() {
+        TokenStream::new()
+    } else {
+        quote! {
+            pub mod private {
+                #[allow(unused_imports)]
+                pub use super::{#(#private_traits),*};
+            }
+        }
+    };
+
+    // By default bring the private traits into the current module (module-local).
+    if !private_traits.is_empty() && cfg.pub_use() {
+        re_exports.extend(quote! {
+            #[allow(unused_imports)]
+            use #module_ident::private::*;
+        });
+    }
+
     Ok(quote! {
         #item
         #[allow(nonstandard_style)]
@@ -99,8 +146,10 @@ pub(crate) fn generate(item: &ItemStruct, cfg: &PartialConfig) -> syn::Result<To
                 use ::#krate::chain::{self, traits::GetField};
                 #inited_defs
             }
+
+            #private_module
         }
-        pub use #module_ident::*;
+        #re_exports
     })
 }
 
@@ -114,6 +163,8 @@ struct FieldInfo {
     access: TokenStream,
     ty: Type,
     index: usize,
+    /// Whether the field is declared `pub`.
+    is_pub: bool,
 }
 
 fn collect_fields(item: &ItemStruct) -> syn::Result<Vec<FieldInfo>> {
@@ -133,6 +184,7 @@ fn collect_fields(item: &ItemStruct) -> syn::Result<Vec<FieldInfo>> {
                     access,
                     ty: field.ty.clone(),
                     index: i + 1,
+                    is_pub: matches!(field.vis, syn::Visibility::Public(_)),
                 });
             }
         }
@@ -150,6 +202,7 @@ fn collect_fields(item: &ItemStruct) -> syn::Result<Vec<FieldInfo>> {
                     access,
                     ty: field.ty.clone(),
                     index: i + 1,
+                    is_pub: matches!(field.vis, syn::Visibility::Public(_)),
                 });
             }
         }
