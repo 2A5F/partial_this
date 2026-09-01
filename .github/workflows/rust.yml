@@ -32,6 +32,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
+    - name: Setup Miri
+      run: rustup +nightly component add miri
     - name: Build
       run: cargo +nightly build --verbose
     - name: Run tests
