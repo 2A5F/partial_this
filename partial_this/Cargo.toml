@@ -4,4 +4,5 @@ name = "partial_this"
 version = "0.1.0"
 
 [dependencies]
-typenum = "1.20"
+partial_this_macro = {workspace = true}
+typenum = {workspace = true}
