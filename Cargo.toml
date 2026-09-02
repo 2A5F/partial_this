@@ -3,7 +3,7 @@ members = ["partial_this", "partial_this_macro"]
 resolver = "3"
 
 [workspace.package]
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 authors = ["2A5F"]
 license = "MIT"
@@ -13,8 +13,8 @@ readme = "README.md"
 keywords = ["ctor", "partial", "constructor"]
 
 [workspace.dependencies]
-partial_this = {path = "partial_this", version="0.2.1"}
-partial_this_macro = {path = "partial_this_macro", version="0.2.1"}
+partial_this = {path = "partial_this", version="0.3.0"}
+partial_this_macro = {path = "partial_this_macro", version="0.3.0"}
 proc-macro2 = "1"
 quote = "1"
 syn = {version = "3", features = ["full"]}
