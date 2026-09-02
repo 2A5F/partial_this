@@ -3,7 +3,7 @@
 //! external crate, and that the `crate_name` config option is honoured.
 
 mod default_crate_name {
-    use partial_this::{DonePartial, PartialThis, partial};
+    use partial_this::{PartialThis, partial};
 
     #[partial]
     pub struct Foo {
@@ -15,7 +15,7 @@ mod default_crate_name {
     fn builds_partially() {
         let p = Foo::partial(Box::new_uninit());
         let mut a = p.foo(1);
-        *a.foo_mut() = 123;
+        a.set_foo(123);
         let r = a.bar(456.0).done();
         assert_eq!(r.foo, 123);
         assert_eq!(r.bar, 456.0);
@@ -23,7 +23,7 @@ mod default_crate_name {
 }
 
 mod ident_crate_name {
-    use partial_this::{DonePartial, PartialThis, partial};
+    use partial_this::{PartialThis, partial};
 
     #[partial(crate_name = partial_this)]
     pub struct Foo {
@@ -35,7 +35,7 @@ mod ident_crate_name {
     fn builds_partially() {
         let p = Foo::partial(Box::new_uninit());
         let mut a = p.foo(1);
-        *a.foo_mut() = 123;
+        a.set_foo(123);
         let r = a.bar(456.0).done();
         assert_eq!(r.foo, 123);
         assert_eq!(r.bar, 456.0);
@@ -43,7 +43,7 @@ mod ident_crate_name {
 }
 
 mod string_crate_name {
-    use partial_this::{DonePartial, PartialThis, partial};
+    use partial_this::{PartialThis, partial};
 
     #[partial(crate_name = "partial_this")]
     pub struct Foo {
@@ -55,7 +55,7 @@ mod string_crate_name {
     fn builds_partially() {
         let p = Foo::partial(Box::new_uninit());
         let mut a = p.foo(1);
-        *a.foo_mut() = 123;
+        a.set_foo(123);
         let r = a.bar(456.0).done();
         assert_eq!(r.foo, 123);
         assert_eq!(r.bar, 456.0);

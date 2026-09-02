@@ -9,171 +9,110 @@ use crate::config::PartialConfig;
 ///
 /// The output consists of:
 /// - the original struct,
-/// - a module containing the `PartialThis` impl, the per-field `Field`
-///   descriptors, and the field builder/accessor traits,
-/// - a `pub use` re-export so the generated traits are brought into scope.
+/// - a private module containing one marker struct per field, plus the
+///   `ThisPtr`/`Drop` impls for those markers,
+/// - a nested `private` module holding the `Partial<N>` builder, the
+///   `PartialThis`/`State` impls, and the per-field builder/accessor methods,
+/// - a re-export of the builder type `PartialFoo` into the current module.
 pub(crate) fn generate(item: &ItemStruct, cfg: &PartialConfig) -> syn::Result<TokenStream> {
     let struct_ident = &item.ident;
     let krate = cfg.crate_name();
     let fields = collect_fields(item)?;
     let module_ident = cfg.module_name(item);
     let names = allocate_names(&item.generics);
+    let n = &names.n;
+    let u = &names.u;
 
     let struct_generics = &item.generics;
     let (struct_impl_gen, struct_ty_gen, struct_wc) = struct_generics.split_for_impl();
-    let struct_impl_generics = quote!(#struct_impl_gen);
     let struct_ty_generics = quote!(#struct_ty_gen);
     let struct_where = match struct_wc {
         Some(wc) => quote!(#wc),
         None => quote!(),
     };
     let struct_type = quote!(#struct_ident #struct_ty_generics);
-    let is_generic = !struct_generics.params.is_empty();
 
-    // Impl generics for `PartialThis`: the struct's params plus the `U` bound.
-    let u = &names.u;
-    let mut partial_impl_gt = struct_generics.clone();
-    partial_impl_gt
-        .params
-        .push(parse_quote!(#u: ::#krate::UninitThis<Target = #struct_type>));
-    let (partial_gen, _, partial_wc) = partial_impl_gt.split_for_impl();
-    let partial_impl_generics = quote!(#partial_gen);
-    let partial_where = match partial_wc {
-        Some(wc) => quote!(#wc),
-        None => quote!(),
-    };
+    let n_fields = fields.len();
+    let all_mask = (1usize << n_fields) - 1;
+    let partial_alias = format_ident!("Partial{}", struct_ident);
+    let typenum_use = gen_typenum_use(&krate, n_fields);
+    let ty_args = ty_args(&item.generics);
 
-    // Build the nested `Field<false, ..., U>` output type and the matching
-    // constructor. Fields are folded in declaration order, which makes the
-    // last declared field the outermost layer.
-    let mut output_ty = quote!(#u);
-    let mut ctor = quote!(this);
-    for f in &fields {
-        let fname = &f.name;
-        output_ty = quote!(chain::Field<false, fields::#fname #struct_ty_generics, #output_ty>);
-        ctor = quote!(chain::Field::uninit(#ctor));
-    }
+    let markers = gen_markers(&krate, &fields, struct_generics, &struct_type, n);
+    let thisptr_impls =
+        gen_marker_thisptr(&krate, &fields, struct_generics, &struct_type, &ty_args, n);
+    let drop_impls = gen_marker_drop(&krate, &fields, struct_generics, &struct_type, &ty_args, n);
+    let state_blanket = gen_state_blanket(&krate, struct_generics, &struct_type, u);
+    let state_impls = gen_state_impls(&krate, &fields, struct_generics, &struct_type, &ty_args, n);
+    let builder_impls =
+        gen_builder_impls(&krate, &fields, struct_generics, &struct_type, &ty_args, n);
+    let accessor_impls = gen_accessor_impls(&krate, &fields, struct_generics, &struct_type, n);
+    let done_impl = gen_done_impl(&krate, struct_generics, &struct_type, n, all_mask);
 
-    let fields_defs = gen_fields_module(
-        &krate,
-        &fields,
-        is_generic,
-        &struct_impl_generics,
-        &struct_ty_generics,
-        &struct_where,
-        &struct_type,
-        &names.init,
-    );
-    let uninit_defs = gen_uninit_module(&krate, item, &fields, &struct_type, &names);
-    let inited_defs = gen_inited_module(&krate, item, &fields, &struct_type, &names);
-
-    // Re-export the builder/accessor traits.
-    //
-    // - Public fields are re-exported with `pub use`.
-    // - Private fields are collected into a nested `private` module inside the
-    //   generated module, and brought into the current module with a plain
-    //   `use <mod>::private::*`, keeping them module-local by default.
-    let mut re_exports = TokenStream::new();
-    let mut private_traits: Vec<Ident> = Vec::new();
-    let mut all_uninit_traits: Vec<Ident> = Vec::new();
-    let mut all_inited_traits: Vec<Ident> = Vec::new();
-
-    for f in &fields {
-        let uninit_trait = format_ident!("{}_uninit_{}", struct_ident, f.name);
-        let inited_trait = format_ident!("{}_inited_{}", struct_ident, f.name);
-        all_uninit_traits.push(uninit_trait.clone());
-        all_inited_traits.push(inited_trait.clone());
-        if f.is_pub {
-            if cfg.pub_use() {
-                re_exports.extend(quote! {
-                    #[allow(unused_imports)]
-                    pub use #module_ident::{#uninit_trait, #inited_trait};
-                });
-            }
-        } else {
-            private_traits.push(uninit_trait);
-            private_traits.push(inited_trait);
-        }
-    }
-
-    // Re-export traits into the generated module with explicit lists (no globs),
-    // avoiding ambiguous-import-visibility lints.
-    let uninit_reexport = if all_uninit_traits.is_empty() {
-        TokenStream::new()
+    let partial_reexport = quote! { pub use private::Partial as #partial_alias; };
+    let top_reexport = if cfg.pub_use() {
+        quote! { pub use #module_ident::#partial_alias; }
     } else {
-        quote! {
-            #[allow(unused_imports)]
-            pub use uninit_fields::{#(#all_uninit_traits),*};
-        }
+        quote! { use #module_ident::#partial_alias; }
     };
-    let inited_reexport = if all_inited_traits.is_empty() {
-        TokenStream::new()
-    } else {
-        quote! {
-            #[allow(unused_imports)]
-            pub use inited_fields::{#(#all_inited_traits),*};
-        }
-    };
-
-    // The nested `private` module collects the private-field traits; it is always
-    // emitted (when there are private fields) so users can re-export it via
-    // `pub use <mod>::private::*` if they wish.
-    let private_module = if private_traits.is_empty() {
-        TokenStream::new()
-    } else {
-        quote! {
-            pub mod private {
-                #[allow(unused_imports)]
-                pub use super::{#(#private_traits),*};
-            }
-        }
-    };
-
-    // By default bring the private traits into the current module (module-local).
-    if !private_traits.is_empty() && cfg.pub_use() {
-        re_exports.extend(quote! {
-            #[allow(unused_imports)]
-            use #module_ident::private::{#(#private_traits),*};
-        });
-    }
 
     Ok(quote! {
         #item
         #[allow(nonstandard_style)]
         mod #module_ident {
-            use ::#krate::{ PartialThis, UninitThis, chain::{self} };
             use super::#struct_ident;
+            use ::#krate::ThisPtr;
 
-            impl #partial_impl_generics PartialThis<#u> for #struct_type #partial_where {
-                type Output = #output_ty;
-                #[cfg_attr(not(debug_assertions), inline(always))]
-                fn partial(this: #u) -> Self::Output {
-                    #ctor
+            #markers
+
+            #thisptr_impls
+
+            #drop_impls
+
+            #partial_reexport
+
+            mod private {
+                use super::*;
+                use super::super::#struct_ident;
+                #typenum_use
+                use ::#krate::{PartialThis, ThisPtr, UninitThis};
+                use ::core::mem::ManuallyDrop;
+                use ::core::ops::{BitAnd, BitOr};
+
+                #[derive(Debug)]
+                pub struct Partial<#n>(#n);
+
+                impl #struct_impl_gen PartialThis for #struct_type #struct_where {
+                    type Partial<#n> = Partial<#n>;
+
+                    fn partial<#u>(this: #u) -> Self::Partial<#u>
+                    where
+                        #u: ::#krate::UninitThis<Target = Self>,
+                    {
+                        Partial(this)
+                    }
                 }
-            }
 
-            mod fields {
-                use ::#krate::chain::traits::Field;
-                #fields_defs
-            }
+                pub trait State: ThisPtr {
+                    type Flags;
+                    type Inited;
 
-            #uninit_reexport
-            mod uninit_fields {
-                use super::#struct_ident;
-                use ::#krate::chain::{self, traits::MapInit};
-                #uninit_defs
-            }
+                    unsafe fn assume_init(self) -> Self::Inited;
+                }
 
-            #inited_reexport
-            mod inited_fields {
-                use super::#struct_ident;
-                use ::#krate::chain::{self, traits::GetField};
-                #inited_defs
-            }
+                #state_blanket
 
-            #private_module
+                #state_impls
+
+                #builder_impls
+
+                #accessor_impls
+
+                #done_impl
+            }
         }
-        #re_exports
+        #[allow(unused_imports)]
+        #top_reexport
     })
 }
 
@@ -186,9 +125,8 @@ struct FieldInfo {
     /// `0`/`1` for tuple fields).
     access: TokenStream,
     ty: Type,
+    /// Field index, starting at `1`.
     index: usize,
-    /// Whether the field is declared `pub`.
-    is_pub: bool,
 }
 
 fn collect_fields(item: &ItemStruct) -> syn::Result<Vec<FieldInfo>> {
@@ -208,7 +146,6 @@ fn collect_fields(item: &ItemStruct) -> syn::Result<Vec<FieldInfo>> {
                     access,
                     ty: field.ty.clone(),
                     index: i + 1,
-                    is_pub: matches!(field.vis, syn::Visibility::Public(_)),
                 });
             }
         }
@@ -226,7 +163,6 @@ fn collect_fields(item: &ItemStruct) -> syn::Result<Vec<FieldInfo>> {
                     access,
                     ty: field.ty.clone(),
                     index: i + 1,
-                    is_pub: matches!(field.vis, syn::Visibility::Public(_)),
                 });
             }
         }
@@ -236,287 +172,387 @@ fn collect_fields(item: &ItemStruct) -> syn::Result<Vec<FieldInfo>> {
     Ok(fields)
 }
 
-/// Generates the `fields` submodule: a marker struct per field plus its `Field` impl.
+/// Builds the comma-separated list of a struct's generic type arguments.
+fn ty_args(generics: &syn::Generics) -> Vec<TokenStream> {
+    let mut args = Vec::new();
+    for param in &generics.params {
+        match param {
+            GenericParam::Lifetime(lp) => {
+                let lt = &lp.lifetime;
+                args.push(quote!(#lt));
+            }
+            GenericParam::Type(tp) => {
+                let id = &tp.ident;
+                args.push(quote!(#id));
+            }
+            GenericParam::Const(cp) => {
+                let id = &cp.ident;
+                args.push(quote!(#id));
+            }
+        }
+    }
+    args
+}
+
+/// Builds the type of a field marker: `name<'a, T, N>` or `name<N>`.
+fn marker_ty(fname: &Ident, ty_args: &[TokenStream], n: &Ident) -> TokenStream {
+    if ty_args.is_empty() {
+        quote!(#fname<#n>)
+    } else {
+        quote!(#fname<#(#ty_args),*, #n>)
+    }
+}
+
+/// Generates the marker structs, one per field.
 ///
-/// For generic structs the marker carries the struct's params so the `Field`
-/// impl (and thus `Target`) can name `Foo<'a, T>`.
-fn gen_fields_module(
+/// Each marker carries the struct's generic parameters and the
+/// `N: ThisPtr<Target = Struct>` bound so its `Drop` impl can be written
+/// without adding new requirements (see E0367).
+fn gen_markers(
     krate: &Ident,
     fields: &[FieldInfo],
-    is_generic: bool,
-    struct_impl_generics: &TokenStream,
-    struct_ty_generics: &TokenStream,
-    struct_where: &TokenStream,
+    struct_generics: &syn::Generics,
     struct_type: &TokenStream,
-    init: &Ident,
+    n: &Ident,
 ) -> TokenStream {
     let mut defs = TokenStream::new();
+    for f in fields {
+        let fname = &f.name;
+        let (marker_gen, marker_where) = impl_parts(
+            struct_generics,
+            &[quote!(#n: ::#krate::ThisPtr<Target = #struct_type>)],
+            &[],
+        );
+        defs.extend(quote! {
+            #[derive(Debug)]
+            pub struct #fname #marker_gen(
+                #n,
+                ::core::marker::PhantomData<#struct_type>,
+            ) #marker_where;
+        });
+    }
+    defs
+}
 
+/// Computes the impl generic parameters and where clause for a block that adds
+/// the given extra params and predicates on top of the struct's generics.
+fn impl_parts(
+    struct_generics: &syn::Generics,
+    extra_params: &[TokenStream],
+    extra_preds: &[TokenStream],
+) -> (TokenStream, TokenStream) {
+    let mut gt = struct_generics.clone();
+    for p in extra_params {
+        gt.params.push(parse_quote!(#p));
+    }
+    let wc = gt.make_where_clause();
+    for p in extra_preds {
+        wc.predicates.push(parse_quote!(#p));
+    }
+    let (impl_gen, _, impl_where) = gt.split_for_impl();
+    (
+        quote!(#impl_gen),
+        match impl_where {
+            Some(wc) => quote!(#wc),
+            None => quote!(),
+        },
+    )
+}
+
+/// Generates the `ThisPtr` impls delegating to the wrapped storage.
+fn gen_marker_thisptr(
+    krate: &Ident,
+    fields: &[FieldInfo],
+    struct_generics: &syn::Generics,
+    struct_type: &TokenStream,
+    ty_args: &[TokenStream],
+    n: &Ident,
+) -> TokenStream {
+    let mut defs = TokenStream::new();
+    for f in fields {
+        let fname = &f.name;
+        let mty = marker_ty(fname, ty_args, n);
+        let (impl_gen, impl_where) = impl_parts(
+            struct_generics,
+            &[quote!(#n: ::#krate::ThisPtr<Target = #struct_type>)],
+            &[],
+        );
+        defs.extend(quote! {
+            impl #impl_gen ThisPtr for #mty #impl_where {
+                type Target = #struct_type;
+
+                #[cfg_attr(not(debug_assertions), inline(always))]
+                fn this(&self) -> &::core::mem::MaybeUninit<Self::Target> {
+                    self.0.this()
+                }
+
+                #[cfg_attr(not(debug_assertions), inline(always))]
+                fn this_mut(&mut self) -> &mut ::core::mem::MaybeUninit<Self::Target> {
+                    self.0.this_mut()
+                }
+            }
+        });
+    }
+    defs
+}
+
+/// Generates the `Drop` impls that drop the already-initialized field value.
+fn gen_marker_drop(
+    krate: &Ident,
+    fields: &[FieldInfo],
+    struct_generics: &syn::Generics,
+    struct_type: &TokenStream,
+    ty_args: &[TokenStream],
+    n: &Ident,
+) -> TokenStream {
+    let mut defs = TokenStream::new();
     for f in fields {
         let fname = &f.name;
         let access = &f.access;
-        let fty = &f.ty;
-        let uid = format_ident!("U{}", f.index);
-
-        let marker_type = quote!(#fname #struct_ty_generics);
-        let marker_def = if is_generic {
-            quote!(
-                #[derive(Debug)]
-                pub struct #fname #struct_impl_generics(
-                    ::core::marker::PhantomData<super::#struct_type>,
-                ) #struct_where;
-            )
-        } else {
-            quote!(
-                #[derive(Debug)]
-                pub struct #fname;
-            )
-        };
-
+        let mty = marker_ty(fname, ty_args, n);
+        let (impl_gen, impl_where) = impl_parts(
+            struct_generics,
+            &[quote!(#n: ::#krate::ThisPtr<Target = #struct_type>)],
+            &[],
+        );
         defs.extend(quote! {
-            #marker_def
-
-            impl #struct_impl_generics Field for #marker_type #struct_where {
-                type Target = super::#struct_type;
-                type Type = #fty;
-                type Id = ::#krate::typenum::#uid;
-
+            impl #impl_gen Drop for #mty #impl_where {
                 #[cfg_attr(not(debug_assertions), inline(always))]
-                unsafe fn drop<const #init: bool>(
-                    this: &mut ::core::mem::MaybeUninit<Self::Target>,
-                ) {
-                    if #init {
-                        unsafe { ::core::ptr::drop_in_place(&mut (*this.as_mut_ptr()).#access) };
+                fn drop(&mut self) {
+                    unsafe {
+                        ::core::ptr::drop_in_place(&mut (*self.0.this_mut().as_mut_ptr()).#access)
                     }
                 }
-
-                #[cfg_attr(not(debug_assertions), inline(always))]
-                unsafe fn init(
-                    this: &mut ::core::mem::MaybeUninit<Self::Target>,
-                    v: Self::Type,
-                ) {
-                    unsafe { ::core::ptr::write(&mut (*this.as_mut_ptr()).#access, v) }
-                }
-
-                #[cfg_attr(not(debug_assertions), inline(always))]
-                unsafe fn get(
-                    this: &::core::mem::MaybeUninit<Self::Target>,
-                ) -> &Self::Type {
-                    unsafe { &(*this.as_ptr()).#access }
-                }
-
-                #[cfg_attr(not(debug_assertions), inline(always))]
-                unsafe fn get_mut(
-                    this: &mut ::core::mem::MaybeUninit<Self::Target>,
-                ) -> &mut Self::Type {
-                    unsafe { &mut (*this.as_mut_ptr()).#access }
-                }
             }
         });
     }
-
     defs
 }
 
-/// Generates the `uninit_fields` submodule: the field builder traits and impls.
-fn gen_uninit_module(
+/// Generates the blanket `State` impl for the uninitialized storage.
+fn gen_state_blanket(
     krate: &Ident,
-    item: &ItemStruct,
-    fields: &[FieldInfo],
-    struct_type: &TokenStream,
-    names: &Names,
-) -> TokenStream {
-    let struct_ident = &item.ident;
-    let struct_generics = &item.generics;
-    let mut defs = TokenStream::new();
-
-    let init = &names.init;
-    let f = &names.f;
-    let n = &names.n;
-    let c = &names.c;
-
-    for fld in fields {
-        let fname = &fld.name;
-        let fty = &fld.ty;
-        let uid = format_ident!("U{}", fld.index);
-        let trait_name = format_ident!("{}_uninit_{}", struct_ident, fname);
-        let assume_name = format_ident!("assume_init_{}", fname);
-
-        let TraitParts {
-            trait_impl_generics,
-            trait_ty_generics,
-            trait_where,
-        } = trait_generics(struct_generics, names);
-        let ImplParts {
-            impl_generics,
-            impl_where,
-        } = field_impl_generics(
-            struct_generics,
-            struct_type,
-            quote!(MapInit<#fty, ::#krate::typenum::#uid, #c>),
-            names,
-        );
-
-        defs.extend(quote! {
-            pub trait #trait_name #trait_impl_generics #trait_where {
-                type Output;
-                fn #fname(self, value: #fty) -> Self::Output;
-                fn #assume_name(self) -> Self::Output;
-            }
-
-            impl #impl_generics #trait_name #trait_ty_generics
-                for chain::Field<#init, #f, #n>
-                #impl_where
-            {
-                type Output =
-                    <Self as MapInit<#fty, ::#krate::typenum::#uid, #c>>::Result;
-
-                #[cfg_attr(not(debug_assertions), inline(always))]
-                fn #fname(self, value: #fty) -> Self::Output {
-                    unsafe { Self::map_init(self, value) }
-                }
-
-                #[cfg_attr(not(debug_assertions), inline(always))]
-                fn #assume_name(self) -> Self::Output {
-                    unsafe { Self::assume_init(self) }
-                }
-            }
-        });
-    }
-
-    defs
-}
-
-/// Generates the `inited_fields` submodule: the field accessor traits and impls.
-fn gen_inited_module(
-    krate: &Ident,
-    item: &ItemStruct,
-    fields: &[FieldInfo],
-    struct_type: &TokenStream,
-    names: &Names,
-) -> TokenStream {
-    let struct_ident = &item.ident;
-    let struct_generics = &item.generics;
-    let mut defs = TokenStream::new();
-
-    let init = &names.init;
-    let f = &names.f;
-    let n = &names.n;
-    let c = &names.c;
-
-    for fld in fields {
-        let fname = &fld.name;
-        let fty = &fld.ty;
-        let uid = format_ident!("U{}", fld.index);
-        let trait_name = format_ident!("{}_inited_{}", struct_ident, fname);
-        let mut_name = format_ident!("{}_mut", fname);
-
-        let TraitParts {
-            trait_impl_generics,
-            trait_ty_generics,
-            trait_where,
-        } = trait_generics(struct_generics, names);
-        let ImplParts {
-            impl_generics,
-            impl_where,
-        } = field_impl_generics(
-            struct_generics,
-            struct_type,
-            quote!(GetField<#fty, ::#krate::typenum::#uid, #c>),
-            names,
-        );
-
-        defs.extend(quote! {
-            pub trait #trait_name #trait_impl_generics #trait_where {
-                fn #fname(&self) -> &#fty;
-                fn #mut_name(&mut self) -> &mut #fty;
-            }
-
-            impl #impl_generics #trait_name #trait_ty_generics
-                for chain::Field<#init, #f, #n>
-                #impl_where
-            {
-                #[cfg_attr(not(debug_assertions), inline(always))]
-                fn #fname(&self) -> &#fty {
-                    unsafe { Self::get(self) }
-                }
-
-                #[cfg_attr(not(debug_assertions), inline(always))]
-                fn #mut_name(&mut self) -> &mut #fty {
-                    unsafe { Self::get_mut(self) }
-                }
-            }
-        });
-    }
-
-    defs
-}
-
-/// Computes the generic tokens for a per-field trait: the struct's params plus
-/// the trailing `C` type parameter.
-fn trait_generics(struct_generics: &syn::Generics, names: &Names) -> TraitParts {
-    let c = &names.c;
-    let mut gt = struct_generics.clone();
-    gt.params.push(parse_quote!(#c));
-    let (impl_gen, ty_gen, where_clause) = gt.split_for_impl();
-    TraitParts {
-        trait_impl_generics: quote!(#impl_gen),
-        trait_ty_generics: quote!(#ty_gen),
-        trait_where: match where_clause {
-            Some(wc) => quote!(#wc),
-            None => quote!(),
-        },
-    }
-}
-
-/// Computes the generic tokens and where clause for a per-field impl:
-/// the struct's params plus `const INIT`, `F`, `N`, `C`, and the `MapInit`/`GetField`
-/// bounds.
-fn field_impl_generics(
     struct_generics: &syn::Generics,
     struct_type: &TokenStream,
-    field_bound: TokenStream,
-    names: &Names,
-) -> ImplParts {
-    let init = &names.init;
-    let f = &names.f;
-    let n = &names.n;
-    let c = &names.c;
+    u: &Ident,
+) -> TokenStream {
+    let (impl_gen, impl_where) = impl_parts(
+        struct_generics,
+        &[quote!(#u: ::#krate::UninitThis<Target = #struct_type>)],
+        &[],
+    );
+    quote! {
+        impl #impl_gen State for #u #impl_where {
+            type Flags = U0;
+            type Inited = <#u as ::#krate::UninitThis>::Inited;
 
-    let mut gt = struct_generics.clone();
-    gt.params.push(parse_quote!(const #init: bool));
-    gt.params.push(parse_quote!(#f));
-    gt.params.push(parse_quote!(#n));
-    gt.params.push(parse_quote!(#c));
+            #[cfg_attr(not(debug_assertions), inline(always))]
+            unsafe fn assume_init(self) -> Self::Inited {
+                unsafe { <#u as ::#krate::UninitThis>::assume_init(self) }
+            }
+        }
+    }
+}
 
-    let wc = gt.make_where_clause();
-    wc.predicates
-        .push(parse_quote!(#n: chain::traits::ThisPtr<Target = #struct_type>));
-    wc.predicates
-        .push(parse_quote!(#f: chain::traits::Field<Target = #struct_type>));
-    wc.predicates.push(parse_quote!(Self: #field_bound));
+/// The typenum bit-mask type for a field at 1-based `index`.
+fn mask_ty(index: usize) -> Ident {
+    let bit = 1usize << (index - 1);
+    format_ident!("U{}", bit)
+}
 
-    let (impl_gen, _, impl_where) = gt.split_for_impl();
-    ImplParts {
-        impl_generics: quote!(#impl_gen),
-        impl_where: match impl_where {
-            Some(wc) => quote!(#wc),
-            None => quote!(),
-        },
+/// Generates the per-marker `State` impls that accumulate the flags.
+fn gen_state_impls(
+    krate: &Ident,
+    fields: &[FieldInfo],
+    struct_generics: &syn::Generics,
+    struct_type: &TokenStream,
+    ty_args: &[TokenStream],
+    n: &Ident,
+) -> TokenStream {
+    let mut defs = TokenStream::new();
+    for f in fields {
+        let fname = &f.name;
+        let mask = mask_ty(f.index);
+        let mty = marker_ty(fname, ty_args, n);
+        let (impl_gen, impl_where) = impl_parts(
+            struct_generics,
+            &[quote!(#n)],
+            &[
+                quote!(#n: ::#krate::ThisPtr<Target = #struct_type>),
+                quote!(#n: State),
+                quote!(<#n as State>::Flags: BitOr<#mask>),
+            ],
+        );
+        defs.extend(quote! {
+            impl #impl_gen State for #mty #impl_where {
+                type Flags = Or<<#n as State>::Flags, #mask>;
+                type Inited = <#n as State>::Inited;
+
+                #[cfg_attr(not(debug_assertions), inline(always))]
+                unsafe fn assume_init(self) -> Self::Inited {
+                    unsafe {
+                        let this = ManuallyDrop::new(self);
+                        ::core::ptr::read(&this.0).assume_init()
+                    }
+                }
+            }
+        });
+    }
+    defs
+}
+
+/// Generates the builder impls: `field(value)` and `assume_init_field`.
+fn gen_builder_impls(
+    krate: &Ident,
+    fields: &[FieldInfo],
+    struct_generics: &syn::Generics,
+    struct_type: &TokenStream,
+    ty_args: &[TokenStream],
+    n: &Ident,
+) -> TokenStream {
+    let mut defs = TokenStream::new();
+    for f in fields {
+        let fname = &f.name;
+        let fty = &f.ty;
+        let access = &f.access;
+        let mask = mask_ty(f.index);
+        let mty = marker_ty(fname, ty_args, n);
+        let assume_name = format_ident!("assume_init_{}", fname);
+        let (impl_gen, impl_where) = impl_parts(
+            struct_generics,
+            &[quote!(#n)],
+            &[
+                quote!(#n: ::#krate::ThisPtr<Target = #struct_type>),
+                quote!(#n: State),
+                quote!(<#n as State>::Flags: BitAnd<#mask, Output = U0>),
+            ],
+        );
+        defs.extend(quote! {
+            impl #impl_gen Partial<#n> #impl_where {
+                #[cfg_attr(not(debug_assertions), inline(always))]
+                pub unsafe fn #assume_name(self) -> Partial<#mty> {
+                    Partial(#fname(self.0, ::core::marker::PhantomData))
+                }
+
+                #[cfg_attr(not(debug_assertions), inline(always))]
+                pub fn #fname(mut self, v: #fty) -> Partial<#mty> {
+                    unsafe {
+                        ::core::ptr::write(
+                            &mut (*self.0.this_mut().as_mut_ptr()).#access,
+                            v,
+                        )
+                    };
+                    Partial(#fname(self.0, ::core::marker::PhantomData))
+                }
+            }
+        });
+    }
+    defs
+}
+
+/// Generates the accessor impls: `get_field`, `get_field_mut`, `set_field`.
+fn gen_accessor_impls(
+    krate: &Ident,
+    fields: &[FieldInfo],
+    struct_generics: &syn::Generics,
+    struct_type: &TokenStream,
+    n: &Ident,
+) -> TokenStream {
+    let mut defs = TokenStream::new();
+    for f in fields {
+        let fname = &f.name;
+        let fty = &f.ty;
+        let access = &f.access;
+        let mask = mask_ty(f.index);
+        let set_name = format_ident!("set_{}", fname);
+        let get_name = format_ident!("get_{}", fname);
+        let get_mut_name = format_ident!("get_{}_mut", fname);
+        let (impl_gen, impl_where) = impl_parts(
+            struct_generics,
+            &[quote!(#n)],
+            &[
+                quote!(#n: ::#krate::ThisPtr<Target = #struct_type>),
+                quote!(#n: State),
+                quote!(<#n as State>::Flags: BitAnd<#mask, Output = #mask>),
+            ],
+        );
+        defs.extend(quote! {
+            impl #impl_gen Partial<#n> #impl_where {
+                #[cfg_attr(not(debug_assertions), inline(always))]
+                pub fn #set_name(&mut self, v: #fty) {
+                    *self.#get_mut_name() = v;
+                }
+
+                #[cfg_attr(not(debug_assertions), inline(always))]
+                pub fn #get_name(&self) -> &#fty {
+                    unsafe { &(*self.0.this().as_ptr()).#access }
+                }
+
+                #[cfg_attr(not(debug_assertions), inline(always))]
+                pub fn #get_mut_name(&mut self) -> &mut #fty {
+                    unsafe { &mut (*self.0.this_mut().as_mut_ptr()).#access }
+                }
+            }
+        });
+    }
+    defs
+}
+
+/// Generates the `done` impl that finalizes the builder once all fields are set.
+fn gen_done_impl(
+    krate: &Ident,
+    struct_generics: &syn::Generics,
+    struct_type: &TokenStream,
+    n: &Ident,
+    all_mask: usize,
+) -> TokenStream {
+    let all_type = format_ident!("U{}", all_mask);
+    let (impl_gen, impl_where) = impl_parts(
+        struct_generics,
+        &[quote!(#n)],
+        &[
+            quote!(#n: ::#krate::ThisPtr<Target = #struct_type>),
+            quote!(#n: State<Flags = #all_type>),
+        ],
+    );
+    quote! {
+        impl #impl_gen Partial<#n> #impl_where {
+            #[cfg_attr(not(debug_assertions), inline(always))]
+            pub fn done(self) -> <#n as State>::Inited {
+                unsafe { self.0.assume_init() }
+            }
+        }
+    }
+}
+
+/// Builds the `use` line importing the typenum literals used in the generated
+/// `private` module.
+fn gen_typenum_use(krate: &Ident, n_fields: usize) -> TokenStream {
+    let mut vals: Vec<usize> = vec![0];
+    if n_fields > 0 {
+        for i in 0..n_fields {
+            vals.push(1usize << i);
+        }
+        vals.push((1usize << n_fields) - 1);
+    }
+    vals.sort_unstable();
+    vals.dedup();
+    let lits = vals.into_iter().map(|v| {
+        let u = format_ident!("U{}", v);
+        quote!(#u)
+    });
+    quote! {
+        use ::#krate::typenum::{Or, #(#lits),*};
     }
 }
 
 /// The internal generic parameter names used by the generated code.
 ///
 /// These are allocated so they never collide with the struct's own generic
-/// parameter names (e.g. a struct with a `F`/`N`/`C`/`INIT`/`U` type or const
-/// parameter).
+/// parameter names (e.g. a struct with an `N` or `U` type parameter).
 struct Names {
     u: Ident,
-    f: Ident,
     n: Ident,
-    c: Ident,
-    init: Ident,
 }
 
 /// Allocates unique internal generic names, avoiding the struct's own params.
@@ -536,10 +572,7 @@ fn allocate_names(generics: &syn::Generics) -> Names {
 
     Names {
         u: unique_ident("U", &mut used),
-        f: unique_ident("F", &mut used),
         n: unique_ident("N", &mut used),
-        c: unique_ident("C", &mut used),
-        init: unique_ident("INIT", &mut used),
     }
 }
 
@@ -557,15 +590,4 @@ fn unique_ident(base: &str, used: &mut HashSet<String>) -> Ident {
         }
         i += 1;
     }
-}
-
-struct TraitParts {
-    trait_impl_generics: TokenStream,
-    trait_ty_generics: TokenStream,
-    trait_where: TokenStream,
-}
-
-struct ImplParts {
-    impl_generics: TokenStream,
-    impl_where: TokenStream,
 }

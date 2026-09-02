@@ -7,14 +7,14 @@ use config::PartialConfig;
 
 /// Generates a type-safe partial construction for a struct.
 ///
-/// Applying the attribute to a struct emits a module that implements
-/// `PartialThis` for the struct, plus per-field builder (`uninit_*`) and
-/// accessor (`inited_*`) traits.
+/// Applying the attribute to a struct emits a module that contains one marker
+/// struct per field, alongside a `Partial<N>` builder type (re-exported as
+/// `PartialFoo`) implementing the `PartialThis` trait for the struct.
 ///
 /// # Example
 ///
 /// ```ignore
-/// use partial_this::{partial, DonePartial, PartialThis};
+/// use partial_this::{partial, PartialThis};
 ///
 /// #[partial]
 /// #[derive(Debug)]
@@ -50,10 +50,10 @@ use config::PartialConfig;
 /// ```ignore
 /// let p = Foo::partial(Box::new_uninit());
 /// let p = p.a(1);
-/// println!("{}", p.a());
+/// println!("{}", p.get_a());
 ///
 /// let mut p = p;
-/// *p.a_mut() = 123;
+/// p.set_a(123);
 /// let p = p.b(2.0);
 /// // let p = p.b(3.0); // error: field already initialized
 /// let foo = p.done();
