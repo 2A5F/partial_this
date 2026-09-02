@@ -31,6 +31,10 @@ pub(crate) fn generate(item: &ItemStruct, cfg: &PartialConfig) -> syn::Result<To
         None => quote!(),
     };
     let struct_type = quote!(#struct_ident #struct_ty_generics);
+    // Within the nested `private` module the struct is reached via the parent of
+    // the generated module, so it is referenced with an explicit `super::super::`
+    // path (no reliance on the glob imports).
+    let struct_ref_private = quote!(super::super::#struct_type);
 
     let n_fields = fields.len();
     let all_mask = (1usize << n_fields) - 1;
@@ -38,16 +42,44 @@ pub(crate) fn generate(item: &ItemStruct, cfg: &PartialConfig) -> syn::Result<To
     let typenum_use = gen_typenum_use(&krate, n_fields);
     let ty_args = ty_args(&item.generics);
 
+    // The builder/accessor value parameters must not shadow the per-field
+    // marker structs, so pick a name absent from every field name.
+    let mut used_names: HashSet<String> = fields.iter().map(|f| f.name.to_string()).collect();
+    used_names.insert("Partial".to_string());
+    used_names.insert("State".to_string());
+    let value_name = unique_ident("value", &mut used_names);
+
     let markers = gen_markers(&krate, &fields, struct_generics, &struct_type, n);
     let thisptr_impls =
         gen_marker_thisptr(&krate, &fields, struct_generics, &struct_type, &ty_args, n);
     let drop_impls = gen_marker_drop(&krate, &fields, struct_generics, &struct_type, &ty_args, n);
-    let state_blanket = gen_state_blanket(&krate, struct_generics, &struct_type, u);
-    let state_impls = gen_state_impls(&krate, &fields, struct_generics, &struct_type, &ty_args, n);
-    let builder_impls =
-        gen_builder_impls(&krate, &fields, struct_generics, &struct_type, &ty_args, n);
-    let accessor_impls = gen_accessor_impls(&krate, &fields, struct_generics, &struct_type, n);
-    let done_impl = gen_done_impl(&krate, struct_generics, &struct_type, n, all_mask);
+    let state_blanket = gen_state_blanket(&krate, struct_generics, &struct_ref_private, u);
+    let state_impls = gen_state_impls(
+        &krate,
+        &fields,
+        struct_generics,
+        &struct_ref_private,
+        &ty_args,
+        n,
+    );
+    let builder_impls = gen_builder_impls(
+        &krate,
+        &fields,
+        struct_generics,
+        &struct_ref_private,
+        &ty_args,
+        n,
+        &value_name,
+    );
+    let accessor_impls = gen_accessor_impls(
+        &krate,
+        &fields,
+        struct_generics,
+        &struct_ref_private,
+        n,
+        &value_name,
+    );
+    let done_impl = gen_done_impl(&krate, struct_generics, &struct_ref_private, n, all_mask);
 
     // A fully `pub` struct whose fields are all `pub` can safely re-export the
     // generated builder type. If any private type would leak into a public
@@ -59,9 +91,9 @@ pub(crate) fn generate(item: &ItemStruct, cfg: &PartialConfig) -> syn::Result<To
 
     let partial_reexport = quote! { pub use private::Partial as #partial_alias; };
     let top_reexport = if safe_to_pub_use {
-        quote! { pub use #module_ident::#partial_alias; }
+        quote! { #[allow(unused_imports)] pub use #module_ident::#partial_alias; }
     } else {
-        quote! { use #module_ident::#partial_alias; }
+        quote! { #[allow(unused_imports)] use #module_ident::#partial_alias; }
     };
 
     Ok(quote! {
@@ -94,7 +126,7 @@ pub(crate) fn generate(item: &ItemStruct, cfg: &PartialConfig) -> syn::Result<To
                 #[derive(Debug)]
                 pub struct Partial<#n>(#n);
 
-                impl #struct_impl_gen PartialThis for #struct_type #struct_where {
+                impl #struct_impl_gen PartialThis for #struct_ref_private #struct_where {
                     type Partial<#n> = Partial<#n>;
 
                     fn partial<#u>(this: #u) -> Self::Partial<#u>
@@ -123,7 +155,6 @@ pub(crate) fn generate(item: &ItemStruct, cfg: &PartialConfig) -> syn::Result<To
                 #done_impl
             }
         }
-        #[allow(unused_imports)]
         #top_reexport
     })
 }
@@ -216,6 +247,16 @@ fn marker_ty(fname: &Ident, ty_args: &[TokenStream], n: &Ident) -> TokenStream {
         quote!(#fname<#n>)
     } else {
         quote!(#fname<#(#ty_args),*, #n>)
+    }
+}
+
+/// Marker type as referenced from the nested `private` module, using an explicit
+/// `super::` path so it never collides with same-named parent items.
+fn marker_ty_super(fname: &Ident, ty_args: &[TokenStream], n: &Ident) -> TokenStream {
+    if ty_args.is_empty() {
+        quote!(super::#fname<#n>)
+    } else {
+        quote!(super::#fname<#(#ty_args),*, #n>)
     }
 }
 
@@ -395,7 +436,7 @@ fn gen_state_impls(
     for f in fields {
         let fname = &f.name;
         let mask = mask_ty(f.index);
-        let mty = marker_ty(fname, ty_args, n);
+        let mty = marker_ty_super(fname, ty_args, n);
         let (impl_gen, impl_where) = impl_parts(
             struct_generics,
             &[quote!(#n)],
@@ -431,6 +472,7 @@ fn gen_builder_impls(
     struct_type: &TokenStream,
     ty_args: &[TokenStream],
     n: &Ident,
+    value_name: &Ident,
 ) -> TokenStream {
     let mut defs = TokenStream::new();
     let is_generic = !struct_generics.params.is_empty();
@@ -439,12 +481,12 @@ fn gen_builder_impls(
         let fty = &f.ty;
         let access = &f.access;
         let mask = mask_ty(f.index);
-        let mty = marker_ty(fname, ty_args, n);
+        let mty = marker_ty_super(fname, ty_args, n);
         let assume_name = format_ident!("assume_init_{}", fname);
         let ctor = if is_generic {
-            quote!(#fname(self.0, ::core::marker::PhantomData))
+            quote!(super::#fname(self.0, ::core::marker::PhantomData))
         } else {
-            quote!(#fname(self.0))
+            quote!(super::#fname(self.0))
         };
         let (impl_gen, impl_where) = impl_parts(
             struct_generics,
@@ -463,11 +505,11 @@ fn gen_builder_impls(
                 }
 
                 #[cfg_attr(not(debug_assertions), inline(always))]
-                pub fn #fname(mut self, v: #fty) -> Partial<#mty> {
+                pub fn #fname(mut self, #value_name: #fty) -> Partial<#mty> {
                     unsafe {
                         ::core::ptr::write(
                             &mut (*self.0.this_mut().as_mut_ptr()).#access,
-                            v,
+                            #value_name,
                         )
                     };
                     Partial(#ctor)
@@ -485,6 +527,7 @@ fn gen_accessor_impls(
     struct_generics: &syn::Generics,
     struct_type: &TokenStream,
     n: &Ident,
+    value_name: &Ident,
 ) -> TokenStream {
     let mut defs = TokenStream::new();
     for f in fields {
@@ -507,8 +550,8 @@ fn gen_accessor_impls(
         defs.extend(quote! {
             impl #impl_gen Partial<#n> #impl_where {
                 #[cfg_attr(not(debug_assertions), inline(always))]
-                pub fn #set_name(&mut self, v: #fty) {
-                    *self.#get_mut_name() = v;
+                pub fn #set_name(&mut self, #value_name: #fty) {
+                    *self.#get_mut_name() = #value_name;
                 }
 
                 #[cfg_attr(not(debug_assertions), inline(always))]
