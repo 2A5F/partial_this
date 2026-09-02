@@ -140,8 +140,7 @@
 //!   `set_field(value)`.
 //! - **`done()`**: finalizes the builder once every field is initialized.
 //! - **Drop safety**: partially-built values drop already-initialized fields in
-//!   reverse order of initialization (the last field set is dropped first),
-//!   not in declaration order.
+//!   reverse order of initialization (the last field set is dropped first).
 //! - **Field visibility**: the builder type `PartialStructName` is re-exported for a
 //!   struct `StructName`, and field methods are available directly on the builder.
 //!

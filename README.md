@@ -27,14 +27,16 @@ fn test() {
 ```
 
 - Multi partial overloads.
+
   ```rust
   let foo: Box<Foo> = Foo::partial(Box::new_uninit()).done();
 
   let foo: Foo = Foo::partial(MaybeUninit::uninit()).done();
-  
+
   let mut foo = MaybeUninit::uninit();
   let foo: &mut Foo = Foo::partial(&mut foo).done();
   ```
+
 - Field initialization methods. Can be called in any order and at most once.
   ```rust
   // ok

@@ -232,6 +232,10 @@ fn gen_markers(
     n: &Ident,
 ) -> TokenStream {
     let mut defs = TokenStream::new();
+    // A generic struct's markers must carry the struct's parameters; `PhantomData`
+    // is only required to make those parameters used. For non-generic structs the
+    // marker only needs `N`, so no `PhantomData` is emitted.
+    let is_generic = !struct_generics.params.is_empty();
     for f in fields {
         let fname = &f.name;
         let (marker_gen, marker_where) = impl_parts(
@@ -239,12 +243,14 @@ fn gen_markers(
             &[quote!(#n: ::#krate::ThisPtr<Target = #struct_type>)],
             &[],
         );
+        let body = if is_generic {
+            quote!((#n, ::core::marker::PhantomData<#struct_type>))
+        } else {
+            quote!((#n))
+        };
         defs.extend(quote! {
             #[derive(Debug)]
-            pub struct #fname #marker_gen(
-                #n,
-                ::core::marker::PhantomData<#struct_type>,
-            ) #marker_where;
+            pub struct #fname #marker_gen #body #marker_where;
         });
     }
     defs
@@ -427,6 +433,7 @@ fn gen_builder_impls(
     n: &Ident,
 ) -> TokenStream {
     let mut defs = TokenStream::new();
+    let is_generic = !struct_generics.params.is_empty();
     for f in fields {
         let fname = &f.name;
         let fty = &f.ty;
@@ -434,6 +441,11 @@ fn gen_builder_impls(
         let mask = mask_ty(f.index);
         let mty = marker_ty(fname, ty_args, n);
         let assume_name = format_ident!("assume_init_{}", fname);
+        let ctor = if is_generic {
+            quote!(#fname(self.0, ::core::marker::PhantomData))
+        } else {
+            quote!(#fname(self.0))
+        };
         let (impl_gen, impl_where) = impl_parts(
             struct_generics,
             &[quote!(#n)],
@@ -447,7 +459,7 @@ fn gen_builder_impls(
             impl #impl_gen Partial<#n> #impl_where {
                 #[cfg_attr(not(debug_assertions), inline(always))]
                 pub unsafe fn #assume_name(self) -> Partial<#mty> {
-                    Partial(#fname(self.0, ::core::marker::PhantomData))
+                    Partial(#ctor)
                 }
 
                 #[cfg_attr(not(debug_assertions), inline(always))]
@@ -458,7 +470,7 @@ fn gen_builder_impls(
                             v,
                         )
                     };
-                    Partial(#fname(self.0, ::core::marker::PhantomData))
+                    Partial(#ctor)
                 }
             }
         });
