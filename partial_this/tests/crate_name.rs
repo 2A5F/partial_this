@@ -3,7 +3,7 @@
 //! external crate, and that the `crate_name` config option is honoured.
 
 mod default_crate_name {
-    use partial_this::{PartialThis, partial};
+    use partial_this::partial;
 
     #[partial]
     pub struct Foo {
@@ -23,7 +23,7 @@ mod default_crate_name {
 }
 
 mod ident_crate_name {
-    use partial_this::{PartialThis, partial};
+    use partial_this::partial;
 
     #[partial(crate_name = partial_this)]
     pub struct Foo {
@@ -43,7 +43,7 @@ mod ident_crate_name {
 }
 
 mod string_crate_name {
-    use partial_this::{PartialThis, partial};
+    use partial_this::partial;
 
     #[partial(crate_name = "partial_this")]
     pub struct Foo {

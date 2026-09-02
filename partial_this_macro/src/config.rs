@@ -15,7 +15,7 @@ const DEFAULT_CRATE_NAME: &str = "partial_this";
 pub(crate) struct PartialConfig {
     /// Name of the module that holds the generated output.
     module: Option<Ident>,
-    /// Name of the crate that exposes `PartialThis`/`chain`/`typenum`.
+    /// Name of the crate that exposes `ThisPtr`/`AnyUninit`/`typenum`.
     ///
     /// Defaults to `partial_this`; set it to the dependency alias when the
     /// `partial_this` crate is renamed in `Cargo.toml`.
@@ -29,12 +29,11 @@ impl PartialConfig {
     /// Returns the name of the generated module, deriving a default from the
     /// struct name when the module is not configured.
     pub(crate) fn module_name(&self, item: &ItemStruct) -> Ident {
-        let name = self.module.clone().unwrap_or_else(|| {
+        self.module.clone().unwrap_or_else(|| {
             let struct_name = &item.ident;
             let snake = to_snake_case(&struct_name.to_string());
             Ident::new(&format!("{snake}_partial"), struct_name.span())
-        });
-        name
+        })
     }
 
     /// Returns the crate name used to build absolute paths in the generated code.

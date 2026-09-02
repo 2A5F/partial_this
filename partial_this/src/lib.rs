@@ -8,7 +8,7 @@
 //! # Example
 //!
 //! ```rust
-//! use partial_this::{partial, PartialThis};
+//! use partial_this::partial;
 //!
 //! #[partial]
 //! #[derive(Debug)]
@@ -33,7 +33,7 @@
 //! reference, producing `Box<T>`, `T`, or `&mut T` respectively:
 //!
 //! ```rust
-//! use partial_this::{partial, PartialThis};
+//! use partial_this::partial;
 //! use core::mem::MaybeUninit;
 //!
 //! #[partial]
@@ -57,7 +57,7 @@
 //! once**:
 //!
 //! ```rust
-//! use partial_this::{partial, PartialThis};
+//! use partial_this::partial;
 //!
 //! #[partial]
 //! pub struct Foo {
@@ -81,7 +81,7 @@
 //! After a field is initialized you can read it or mutate it:
 //!
 //! ```rust
-//! use partial_this::{partial, PartialThis};
+//! use partial_this::partial;
 //!
 //! #[partial]
 //! pub struct Foo {
@@ -104,7 +104,7 @@
 //! lifetime-parameterized structs are also supported:
 //!
 //! ```rust
-//! use partial_this::{partial, PartialThis};
+//! use partial_this::partial;
 //!
 //! #[partial]
 //! pub struct Bar(i32, f32);
@@ -160,6 +160,141 @@ use core::mem::MaybeUninit;
 
 pub use typenum;
 
+/// Generates a type-safe partial construction for a struct.
+///
+/// Applying the attribute to a struct emits a module that contains one marker
+/// struct per field, alongside an inherent `partial` constructor on the struct
+/// and a `Partial<N>` builder type (re-exported as `PartialFoo`).
+///
+/// # Example
+///
+/// ```
+/// use partial_this::partial;
+///
+/// #[partial]
+/// #[derive(Debug)]
+/// pub struct Foo {
+///     pub a: i32,
+///     pub b: f32,
+/// }
+///
+/// fn main() {
+///     let foo = Foo::partial(Box::new_uninit())
+///         .a(1)
+///         .b(2.0)
+///         .done();
+///     assert_eq!(foo.a, 1);
+///     assert_eq!(foo.b, 2.0);
+/// }
+/// ```
+///
+/// # Multiple partial sources
+///
+/// `Box::new_uninit()`, `MaybeUninit::uninit()`, and `&mut MaybeUninit` are all
+/// accepted as the initial storage, finalizing to `Box<T>`, `T`, or `&mut T`:
+///
+/// ```
+/// use partial_this::partial;
+/// use core::mem::MaybeUninit;
+///
+/// #[partial]
+/// pub struct Foo {
+///     pub a: i32,
+///     pub b: f32,
+/// }
+///
+/// fn main() {
+///     let boxed: Box<Foo> = Foo::partial(Box::new_uninit()).a(1).b(2.0).done();
+///     let owned: Foo = Foo::partial(MaybeUninit::uninit()).a(1).b(2.0).done();
+///
+///     let mut buf = MaybeUninit::uninit();
+///     let borrowed: &mut Foo = Foo::partial(&mut buf).a(1).b(2.0).done();
+///     let _ = (boxed, owned, borrowed);
+/// }
+/// ```
+///
+/// # Field initialization & access
+///
+/// Field builders can be called in any order, but at most once; after a field is
+/// initialized you can read or mutate it:
+///
+/// ```
+/// use partial_this::partial;
+///
+/// #[partial]
+/// pub struct Foo {
+///     pub a: i32,
+///     pub b: f32,
+/// }
+///
+/// fn main() {
+///     let mut p = Foo::partial(Box::new_uninit());
+///     let p = p.a(1);
+///     assert_eq!(*p.get_a(), 1);
+///     let mut p = p;
+///     p.set_a(123);
+///     let p = p.b(2.0);
+///     let foo = p.done();
+///     assert_eq!(foo.a, 123);
+/// }
+/// ```
+///
+/// # Tuple and generic structs
+///
+/// Tuple structs use `_0`, `_1`, ... as field names; generic and lifetime
+/// structs are supported too:
+///
+/// ```
+/// use partial_this::partial;
+///
+/// #[partial]
+/// pub struct Bar(i32, f32);
+///
+/// #[partial]
+/// pub struct Pair<'a, T> {
+///     pub name: &'a str,
+///     pub value: T,
+/// }
+///
+/// fn main() {
+///     let bar = Bar::partial(Box::new_uninit())._0(1)._1(2.0).done();
+///     assert_eq!(bar.0, 1);
+///
+///     let pair = Pair::<String>::partial(Box::new_uninit())
+///         .name("x")
+///         .value(String::from("y"))
+///         .done();
+///     assert_eq!(pair.name, "x");
+///     assert_eq!(pair.value, "y");
+/// }
+/// ```
+///
+/// # Behavior
+///
+/// - **Field initialization** — each field's builder method can be called in
+///   any order, but at most once; calling it twice is a compile error.
+/// - **Field access** — after a field is initialized you can read it with
+///   `get_field()`, mutate it with `get_field_mut()`, or assign with
+///   `set_field(value)`.
+/// - **`done()`** — finalizes the builder once every field is initialized.
+/// - **Drop safety** — dropping an unfinished builder drops already-initialized
+///   fields in reverse order of initialization (the last field set is dropped
+///   first).
+/// - **Field visibility** — the builder type `PartialStructName` is re-exported
+///   for a struct `StructName`; field methods are available directly on it.
+///
+/// # Config
+///
+/// - `module = name` — name of the generated module. Defaults to a snake_case
+///   variant of the struct name, e.g. `foo_partial` for `Foo`.
+/// - `crate_name = name` — crate that exposes `ThisPtr`/`AnyUninit`/`typenum`.
+///   Defaults to `partial_this`; set it to the dependency alias when the crate
+///   is renamed in `Cargo.toml`.
+/// - `pub_use = true|false` — whether to re-export the generated `PartialXxx`
+///   builder type with `pub use`. Defaults to `true`; set to `false` to keep it
+///   module-local. Even when `true`, if the struct or any field is not `pub`
+///   (which would leak a private type into a public interface), the re-export
+///   falls back to a module-local `use`.
 pub use partial_this_macro::partial;
 
 pub use uninit_this::*;
@@ -173,7 +308,7 @@ mod uninit_this {
     /// `Box<MaybeUninit<T>>`, `Rc<MaybeUninit<T>>` and `Arc<MaybeUninit<T>>`.
     /// Implementations expose the underlying [`MaybeUninit`](core::mem::MaybeUninit)
     /// and allow assuming the storage has been initialized.
-    pub trait UninitThis {
+    pub trait AnyUninit {
         /// The type to be constructed.
         type Target;
 
@@ -181,16 +316,28 @@ mod uninit_this {
         type Inited;
 
         /// Borrows the underlying uninitialized storage.
+        ///
+        /// # Safety
+        ///
+        /// The storage must not have been initialized yet.
         unsafe fn get(&self) -> &MaybeUninit<Self::Target>;
 
         /// Mutably borrows the underlying uninitialized storage.
+        ///
+        /// # Safety
+        ///
+        /// The storage must not have been initialized yet.
         unsafe fn get_mut(&mut self) -> &mut MaybeUninit<Self::Target>;
 
         /// Assumes the storage has been initialized and returns the value.
+        ///
+        /// # Safety
+        ///
+        /// Every field must have been initialized before the value is assumed.
         unsafe fn assume_init(self) -> Self::Inited;
     }
 
-    impl<'a, T> UninitThis for &'a mut MaybeUninit<T> {
+    impl<'a, T> AnyUninit for &'a mut MaybeUninit<T> {
         type Target = T;
 
         type Inited = &'a mut T;
@@ -210,7 +357,7 @@ mod uninit_this {
             self
         }
     }
-    impl<T> UninitThis for MaybeUninit<T> {
+    impl<T> AnyUninit for MaybeUninit<T> {
         type Target = T;
         type Inited = T;
 
@@ -229,7 +376,7 @@ mod uninit_this {
             self
         }
     }
-    impl<T> UninitThis for Box<MaybeUninit<T>> {
+    impl<T> AnyUninit for Box<MaybeUninit<T>> {
         type Target = T;
         type Inited = Box<T>;
 
@@ -248,7 +395,7 @@ mod uninit_this {
             self
         }
     }
-    impl<T> UninitThis for Rc<MaybeUninit<T>> {
+    impl<T> AnyUninit for Rc<MaybeUninit<T>> {
         type Target = T;
         type Inited = Rc<T>;
 
@@ -267,7 +414,7 @@ mod uninit_this {
             Rc::get_mut(self).unwrap()
         }
     }
-    impl<T> UninitThis for Arc<MaybeUninit<T>> {
+    impl<T> AnyUninit for Arc<MaybeUninit<T>> {
         type Target = T;
         type Inited = Arc<T>;
 
@@ -288,22 +435,8 @@ mod uninit_this {
     }
 }
 
-/// A struct that can be partially constructed.
-///
-/// Implemented by the [`partial`] macro for a struct. [`partial`](Self::partial)
-/// starts the builder with some uninitialized storage, returning a builder value
-/// whose type is [`Self::Partial`].
-pub trait PartialThis {
-    /// The builder type for this struct, parameterized by the storage type `N`.
-    type Partial<N>;
-
-    /// Starts building a value of `Self` inside the given uninitialized storage.
-    fn partial<U>(this: U) -> Self::Partial<U>
-    where
-        U: UninitThis<Target = Self>;
-}
-
 /// Provides access to the underlying uninitialized storage of a builder node.
+#[doc(hidden)]
 pub trait ThisPtr {
     /// The struct type being constructed.
     type Target;
@@ -315,7 +448,7 @@ pub trait ThisPtr {
     fn this_mut(&mut self) -> &mut MaybeUninit<Self::Target>;
 }
 
-impl<U: UninitThis> ThisPtr for U {
+impl<U: AnyUninit> ThisPtr for U {
     type Target = U::Target;
 
     #[cfg_attr(not(debug_assertions), inline(always))]
@@ -332,8 +465,6 @@ impl<U: UninitThis> ThisPtr for U {
 #[cfg(test)]
 #[allow(nonstandard_style)]
 pub mod test_reference {
-    use crate::PartialThis;
-
     #[derive(Debug)]
     pub struct Foo {
         pub foo: i32,
@@ -388,8 +519,9 @@ pub mod test_reference {
         pub use private::Partial as PartialFoo;
 
         mod private {
+            #![allow(clippy::missing_safety_doc)]
             use super::*;
-            use crate::{PartialThis, ThisPtr, UninitThis};
+            use crate::{AnyUninit, ThisPtr};
             use core::mem::ManuallyDrop;
             use core::ops::{BitAnd, BitOr};
             use typenum::{Or, Shleft, U0, U1, U2, U3};
@@ -397,12 +529,10 @@ pub mod test_reference {
             #[derive(Debug)]
             pub struct Partial<N>(N);
 
-            impl PartialThis for super::super::Foo {
-                type Partial<N> = private::Partial<N>;
-
-                fn partial<U>(this: U) -> Self::Partial<U>
+            impl super::super::Foo {
+                pub fn partial<U>(this: U) -> private::Partial<U>
                 where
-                    U: crate::UninitThis<Target = Self>,
+                    U: crate::AnyUninit<Target = super::super::Foo>,
                 {
                     private::Partial(this)
                 }
@@ -415,7 +545,7 @@ pub mod test_reference {
                 unsafe fn assume_init(self) -> Self::Inited;
             }
 
-            impl<U: UninitThis<Target = super::super::Foo>> State for U {
+            impl<U: AnyUninit<Target = super::super::Foo>> State for U {
                 type Flags = U0;
 
                 type Inited = U::Inited;

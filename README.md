@@ -2,6 +2,7 @@
 
 [![Rust](https://github.com/2A5F/partial_this/actions/workflows/rust.yml/badge.svg)](https://github.com/2A5F/partial_this/actions/workflows/rust.yml)
 [![Miri](https://github.com/2A5F/partial_this/actions/workflows/miri.yml/badge.svg)](https://github.com/2A5F/partial_this/actions/workflows/miri.yml)
+[![Clippy](https://github.com/2A5F/partial_this/actions/workflows/clippy.yml/badge.svg)](https://github.com/2A5F/partial_this/actions/workflows/clippy.yml)
 [![version](https://img.shields.io/crates/v/partial_this)](https://crates.io/crates/partial_this)
 [![documentation](https://docs.rs/partial_this/badge.svg)](https://docs.rs/partial_this)
 ![LICENSE](https://img.shields.io/crates/l/partial_this)

@@ -3,7 +3,7 @@
 //! first), not in declaration order. It also exercises custom (non-prelude)
 //! field types in the generated builder.
 
-use partial_this::{PartialThis, partial};
+use partial_this::partial;
 use std::cell::RefCell;
 
 thread_local! {
