@@ -21,14 +21,14 @@ fn test() {
     let p = Foo::partial(Box::new_uninit());
     let p = p.foo(1);
     let p = p.bar(1.0);
-    let foo: Box<T> = p.done();
+    let foo: Box<Foo> = p.done();
     println!("{:?}", foo);
 }
 ```
 
 - Multi partial overloads.
   ```rust
-  let foo: Box<T> = Foo::partial(Box::new_uninit()).done();
+  let foo: Box<Foo> = Foo::partial(Box::new_uninit()).done();
 
   let foo: Foo = Foo::partial(MaybeUninit::uninit()).done();
   
@@ -53,17 +53,17 @@ fn test() {
 - Field access methods. Can be called after initialization.
   ```rust
   let p = p.foo(1);
-  println!("{}", p.foo());
+  println!("{}", p.get_foo());
   ```
   ```rust
   let mut p = p.foo(1);
-  *p.foo_mut() = 123；
+  p.set_foo(123);
   ```
 - Done method.Can be called after all fields are initialized.
   ```rust
   let foo = p.done();
   ```
-- Drop safe. Will call fields `drop` according to the field initialization status and fields declare order.
+- Drop safe. Will call fields `drop` according to the field initialization status and in the reverse order of initialization (the last field initialized is dropped first).
   ```rust
   struct Some {
     field0: ...,

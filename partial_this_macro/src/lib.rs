@@ -84,25 +84,26 @@ use config::PartialConfig;
 ///
 /// - **Field initialization** — each field's builder method can be called in
 ///   any order, but at most once; calling it twice is a compile error.
-/// - **Field access** — after a field is initialized, `field()` borrows its
-///   value and `field_mut()` returns a mutable reference.
+/// - **Field access** — after a field is initialized you can read it with
+///   `get_field()`, mutate it with `get_field_mut()`, or assign with
+///   `set_field(value)`.
 /// - **`done()`** — finalizes the builder once every field is initialized.
 /// - **Drop safety** — dropping an unfinished builder drops already-initialized
-///   fields in declaration order.
-/// - **Field visibility** — `pub` fields' traits are re-exported with `pub use`;
-///   private fields' traits are collected into a nested `private` module and
-///   brought into scope with a plain `use` (module-local by default).
+///   fields in reverse order of initialization (the last field set is dropped
+///   first), not in declaration order.
+/// - **Field visibility** — the builder type `PartialStructName` is re-exported
+///   for a struct `StructName`; field methods are available directly on it.
 ///
 /// # Config
 ///
 /// - `module = name` — name of the generated module. Defaults to a snake_case
 ///   variant of the struct name, e.g. `foo_partial` for `Foo`.
-/// - `crate_name = name` — crate that exposes `PartialThis`/`chain`/`typenum`.
+/// - `crate_name = name` — crate that exposes `PartialThis`/`ThisPtr`/`typenum`.
 ///   Defaults to `partial_this`; set it to the dependency alias when the crate
 ///   is renamed in `Cargo.toml`.
-/// - `pub_use = true|false` — whether to re-export the generated builder and
-///   accessor traits. Defaults to `true`; set to `false` to require manual
-///   imports.
+/// - `pub_use = true|false` — whether to re-export the generated `PartialXxx`
+///   builder type with `pub use`. Defaults to `true`; set to `false` to keep it
+///   module-local.
 #[proc_macro_attribute]
 pub fn partial(attr: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as ItemStruct);
