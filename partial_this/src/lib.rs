@@ -859,7 +859,6 @@ pub mod test {
 }
 
 #[cfg(test)]
-#[allow(nonstandard_style)]
 pub mod test1 {
     use super::*;
 
@@ -877,5 +876,247 @@ pub mod test1 {
         let foo = a.bar(456.0).done();
         assert_eq!(foo.foo, 123);
         assert_eq!(foo.bar, 456.0);
+    }
+}
+
+pub trait PartialThis2 {
+    type Partial<N>;
+
+    fn partial<U>(this: U) -> Self::Partial<U>
+    where
+        U: UninitThis<Target = Self>;
+}
+
+pub trait ThisPtr2 {
+    type Target;
+
+    fn this(&self) -> &MaybeUninit<Self::Target>;
+
+    fn this_mut(&mut self) -> &mut MaybeUninit<Self::Target>;
+}
+
+impl<U: UninitThis> ThisPtr2 for U {
+    type Target = U::Target;
+
+    fn this(&self) -> &MaybeUninit<Self::Target> {
+        unsafe { U::get(self) }
+    }
+
+    fn this_mut(&mut self) -> &mut MaybeUninit<Self::Target> {
+        unsafe { U::get_mut(self) }
+    }
+}
+
+#[cfg(test)]
+pub mod test2 {
+    use crate::PartialThis2;
+
+    #[derive(Debug)]
+    pub struct Foo {
+        pub foo: i32,
+        pub bar: f32,
+    }
+
+    pub use should_be_generated_by_macro::*;
+    #[allow(nonstandard_style)]
+    mod should_be_generated_by_macro {
+        use crate::ThisPtr2;
+
+        #[derive(Debug)]
+        pub struct foo<N: ThisPtr2<Target = super::Foo>>(N);
+        #[derive(Debug)]
+        pub struct bar<N: ThisPtr2<Target = super::Foo>>(N);
+
+        impl<N: ThisPtr2<Target = super::Foo>> ThisPtr2 for foo<N> {
+            type Target = super::Foo;
+
+            fn this(&self) -> &core::mem::MaybeUninit<Self::Target> {
+                self.0.this()
+            }
+
+            fn this_mut(&mut self) -> &mut core::mem::MaybeUninit<Self::Target> {
+                self.0.this_mut()
+            }
+        }
+
+        impl<N: ThisPtr2<Target = super::Foo>> ThisPtr2 for bar<N> {
+            type Target = super::Foo;
+
+            fn this(&self) -> &core::mem::MaybeUninit<Self::Target> {
+                self.0.this()
+            }
+
+            fn this_mut(&mut self) -> &mut core::mem::MaybeUninit<Self::Target> {
+                self.0.this_mut()
+            }
+        }
+
+        impl<N: ThisPtr2<Target = super::Foo>> Drop for foo<N> {
+            fn drop(&mut self) {
+                unsafe { core::ptr::drop_in_place(&mut (*self.0.this_mut().as_mut_ptr()).foo) };
+            }
+        }
+
+        impl<N: ThisPtr2<Target = super::Foo>> Drop for bar<N> {
+            fn drop(&mut self) {
+                unsafe { core::ptr::drop_in_place(&mut (*self.0.this_mut().as_mut_ptr()).bar) };
+            }
+        }
+
+        pub use private::Partial as PartialFoo;
+
+        mod private {
+            use super::*;
+            use crate::{PartialThis2, ThisPtr2, UninitThis};
+            use core::{
+                mem::ManuallyDrop,
+                ops::{BitAnd, BitOr},
+            };
+            use typenum::{Or, Shleft, U0, U1, U2, U3};
+
+            #[derive(Debug)]
+            pub struct Partial<N>(N);
+
+            impl PartialThis2 for super::super::Foo {
+                type Partial<N> = private::Partial<N>;
+
+                fn partial<U>(this: U) -> Self::Partial<U>
+                where
+                    U: crate::UninitThis<Target = Self>,
+                {
+                    private::Partial(this)
+                }
+            }
+
+            pub trait State: ThisPtr2<Target = super::super::Foo> {
+                type Flags;
+                type Inited;
+
+                unsafe fn assume_init(self) -> Self::Inited;
+            }
+
+            impl<U: UninitThis<Target = super::super::Foo>> State for U {
+                type Flags = U0;
+
+                type Inited = U::Inited;
+
+                unsafe fn assume_init(self) -> Self::Inited {
+                    unsafe { U::assume_init(self) }
+                }
+            }
+
+            impl<N> State for foo<N>
+            where
+                N: State,
+                N::Flags: BitOr<U1>,
+            {
+                type Flags = Or<N::Flags, U1>;
+                type Inited = N::Inited;
+
+                unsafe fn assume_init(self) -> Self::Inited {
+                    unsafe {
+                        let this = ManuallyDrop::new(self);
+                        core::ptr::read(&this.0).assume_init()
+                    }
+                }
+            }
+
+            impl<N> State for bar<N>
+            where
+                N: State,
+                N::Flags: BitOr<Shleft<U1, U1>>,
+            {
+                type Flags = Or<N::Flags, U2>;
+                type Inited = N::Inited;
+
+                unsafe fn assume_init(self) -> Self::Inited {
+                    unsafe {
+                        let this = ManuallyDrop::new(self);
+                        core::ptr::read(&this.0).assume_init()
+                    }
+                }
+            }
+
+            impl<N> Partial<N>
+            where
+                N: ThisPtr2<Target = super::super::Foo> + State,
+                N::Flags: BitAnd<U1, Output = U0>,
+            {
+                pub unsafe fn assume_init_foo(self) -> Partial<foo<N>> {
+                    Partial(foo(self.0))
+                }
+
+                pub fn foo(mut self, value: i32) -> Partial<foo<N>> {
+                    unsafe { core::ptr::write(&mut (*self.0.this_mut().as_mut_ptr()).foo, value) };
+                    Partial(foo(self.0))
+                }
+            }
+
+            impl<N> Partial<N>
+            where
+                N: ThisPtr2<Target = super::super::Foo> + State,
+                N::Flags: BitAnd<U2, Output = U0>,
+            {
+                pub unsafe fn assume_init_bar(self) -> Partial<bar<N>> {
+                    Partial(bar(self.0))
+                }
+
+                pub fn bar(mut self, value: f32) -> Partial<bar<N>> {
+                    unsafe { core::ptr::write(&mut (*self.0.this_mut().as_mut_ptr()).bar, value) };
+                    Partial(bar(self.0))
+                }
+            }
+
+            impl<N> Partial<N>
+            where
+                N: ThisPtr2<Target = super::super::Foo> + State,
+                N::Flags: BitAnd<U1, Output = U1>,
+            {
+                pub fn set_foo(&mut self, value: i32) {
+                    *self.get_foo_mut() = value;
+                }
+                pub fn get_foo(&self) -> &i32 {
+                    unsafe { &(*self.0.this().as_ptr()).foo }
+                }
+                pub fn get_foo_mut(&mut self) -> &mut i32 {
+                    unsafe { &mut (*self.0.this_mut().as_mut_ptr()).foo }
+                }
+            }
+
+            impl<N> Partial<N>
+            where
+                N: ThisPtr2<Target = super::super::Foo> + State,
+                N::Flags: BitAnd<U2, Output = U1>,
+            {
+                pub fn set_bar(&mut self, value: f32) {
+                    *self.get_bar_mut() = value;
+                }
+                pub fn get_bar(&self) -> &f32 {
+                    unsafe { &(*self.0.this().as_ptr()).bar }
+                }
+                pub fn get_bar_mut(&mut self) -> &mut f32 {
+                    unsafe { &mut (*self.0.this_mut().as_mut_ptr()).bar }
+                }
+            }
+
+            impl<N> Partial<N>
+            where
+                N: State<Flags = U3>,
+            {
+                pub fn done(self) -> N::Inited {
+                    unsafe { self.0.assume_init() }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test1() {
+        let a = Foo::partial(Box::new_uninit());
+        let mut a = a.foo(1);
+        a.set_foo(123);
+        let a = a.bar(456.0).done();
+        assert_eq!(a.foo, 123);
+        assert_eq!(a.bar, 456.0)
     }
 }
