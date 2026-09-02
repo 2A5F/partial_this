@@ -8,13 +8,13 @@ use config::PartialConfig;
 /// Generates a type-safe partial construction for a struct.
 ///
 /// Applying the attribute to a struct emits a module that contains one marker
-/// struct per field, alongside a `Partial<N>` builder type (re-exported as
-/// `PartialFoo`) implementing the `PartialThis` trait for the struct.
+/// struct per field, alongside an inherent `partial` constructor on the struct
+/// and a `Partial<N>` builder type (re-exported as `PartialFoo`).
 ///
 /// # Example
 ///
 /// ```ignore
-/// use partial_this::{partial, PartialThis};
+/// use partial_this::partial;
 ///
 /// #[partial]
 /// #[derive(Debug)]
@@ -98,7 +98,7 @@ use config::PartialConfig;
 ///
 /// - `module = name` — name of the generated module. Defaults to a snake_case
 ///   variant of the struct name, e.g. `foo_partial` for `Foo`.
-/// - `crate_name = name` — crate that exposes `PartialThis`/`ThisPtr`/`typenum`.
+/// - `crate_name = name` — crate that exposes `ThisPtr`/`UninitThis`/`typenum`.
 ///   Defaults to `partial_this`; set it to the dependency alias when the crate
 ///   is renamed in `Cargo.toml`.
 /// - `pub_use = true|false` — whether to re-export the generated `PartialXxx`

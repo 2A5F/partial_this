@@ -8,7 +8,7 @@
 //! # Example
 //!
 //! ```rust
-//! use partial_this::{partial, PartialThis};
+//! use partial_this::partial;
 //!
 //! #[partial]
 //! #[derive(Debug)]
@@ -33,7 +33,7 @@
 //! reference, producing `Box<T>`, `T`, or `&mut T` respectively:
 //!
 //! ```rust
-//! use partial_this::{partial, PartialThis};
+//! use partial_this::partial;
 //! use core::mem::MaybeUninit;
 //!
 //! #[partial]
@@ -57,7 +57,7 @@
 //! once**:
 //!
 //! ```rust
-//! use partial_this::{partial, PartialThis};
+//! use partial_this::partial;
 //!
 //! #[partial]
 //! pub struct Foo {
@@ -81,7 +81,7 @@
 //! After a field is initialized you can read it or mutate it:
 //!
 //! ```rust
-//! use partial_this::{partial, PartialThis};
+//! use partial_this::partial;
 //!
 //! #[partial]
 //! pub struct Foo {
@@ -104,7 +104,7 @@
 //! lifetime-parameterized structs are also supported:
 //!
 //! ```rust
-//! use partial_this::{partial, PartialThis};
+//! use partial_this::partial;
 //!
 //! #[partial]
 //! pub struct Bar(i32, f32);
@@ -288,21 +288,6 @@ mod uninit_this {
     }
 }
 
-/// A struct that can be partially constructed.
-///
-/// Implemented by the [`partial`] macro for a struct. [`partial`](Self::partial)
-/// starts the builder with some uninitialized storage, returning a builder value
-/// whose type is [`Self::Partial`].
-pub trait PartialThis {
-    /// The builder type for this struct, parameterized by the storage type `N`.
-    type Partial<N>;
-
-    /// Starts building a value of `Self` inside the given uninitialized storage.
-    fn partial<U>(this: U) -> Self::Partial<U>
-    where
-        U: UninitThis<Target = Self>;
-}
-
 /// Provides access to the underlying uninitialized storage of a builder node.
 pub trait ThisPtr {
     /// The struct type being constructed.
@@ -332,8 +317,6 @@ impl<U: UninitThis> ThisPtr for U {
 #[cfg(test)]
 #[allow(nonstandard_style)]
 pub mod test_reference {
-    use crate::PartialThis;
-
     #[derive(Debug)]
     pub struct Foo {
         pub foo: i32,
@@ -389,7 +372,7 @@ pub mod test_reference {
 
         mod private {
             use super::*;
-            use crate::{PartialThis, ThisPtr, UninitThis};
+            use crate::{ThisPtr, UninitThis};
             use core::mem::ManuallyDrop;
             use core::ops::{BitAnd, BitOr};
             use typenum::{Or, Shleft, U0, U1, U2, U3};
@@ -397,12 +380,10 @@ pub mod test_reference {
             #[derive(Debug)]
             pub struct Partial<N>(N);
 
-            impl PartialThis for super::super::Foo {
-                type Partial<N> = private::Partial<N>;
-
-                fn partial<U>(this: U) -> Self::Partial<U>
+            impl super::super::Foo {
+                pub fn partial<U>(this: U) -> private::Partial<U>
                 where
-                    U: crate::UninitThis<Target = Self>,
+                    U: crate::UninitThis<Target = super::super::Foo>,
                 {
                     private::Partial(this)
                 }

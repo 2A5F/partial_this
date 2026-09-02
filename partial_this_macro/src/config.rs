@@ -15,7 +15,7 @@ const DEFAULT_CRATE_NAME: &str = "partial_this";
 pub(crate) struct PartialConfig {
     /// Name of the module that holds the generated output.
     module: Option<Ident>,
-    /// Name of the crate that exposes `PartialThis`/`chain`/`typenum`.
+    /// Name of the crate that exposes `ThisPtr`/`UninitThis`/`typenum`.
     ///
     /// Defaults to `partial_this`; set it to the dependency alias when the
     /// `partial_this` crate is renamed in `Cargo.toml`.

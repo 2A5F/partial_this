@@ -11,8 +11,9 @@ use crate::config::PartialConfig;
 /// - the original struct,
 /// - a private module containing one marker struct per field, plus the
 ///   `ThisPtr`/`Drop` impls for those markers,
-/// - a nested `private` module holding the `Partial<N>` builder, the
-///   `PartialThis`/`State` impls, and the per-field builder/accessor methods,
+/// - a nested `private` module holding the `Partial<N>` builder, the inherent
+///   `partial` constructor, the `State` impls, and the per-field
+///   builder/accessor methods,
 /// - a re-export of the builder type `PartialFoo` into the current module.
 pub(crate) fn generate(item: &ItemStruct, cfg: &PartialConfig) -> syn::Result<TokenStream> {
     let struct_ident = &item.ident;
@@ -49,7 +50,38 @@ pub(crate) fn generate(item: &ItemStruct, cfg: &PartialConfig) -> syn::Result<To
     used_names.insert("State".to_string());
     let value_name = unique_ident("value", &mut used_names);
 
-    let markers = gen_markers(&krate, &fields, struct_generics, &struct_type, n);
+    // Generated items take a visibility that never exceeds the struct's own:
+    // `pub` stays `pub`, `pub(crate)`/`pub(in ...)` is mirrored, and a private
+    // struct gets `pub(in ...)` scoped to its own module (so the builder is
+    // usable exactly where the struct is, without leaking globally).
+    let vis = &item.vis;
+    let is_public = matches!(item.vis, syn::Visibility::Public(_));
+    let is_restricted = matches!(item.vis, syn::Visibility::Restricted(_));
+    let is_private = matches!(item.vis, syn::Visibility::Inherited);
+
+    let marker_vis = if is_public {
+        quote!(pub)
+    } else if is_restricted {
+        quote!(#vis)
+    } else {
+        quote!(pub(in super))
+    };
+    let partial_vis = if is_public {
+        quote!(pub)
+    } else if is_restricted {
+        quote!(#vis)
+    } else {
+        quote!(pub(in super::super))
+    };
+
+    let markers = gen_markers(
+        &krate,
+        &fields,
+        struct_generics,
+        &struct_type,
+        n,
+        &marker_vis,
+    );
     let thisptr_impls =
         gen_marker_thisptr(&krate, &fields, struct_generics, &struct_type, &ty_args, n);
     let drop_impls = gen_marker_drop(&krate, &fields, struct_generics, &struct_type, &ty_args, n);
@@ -89,11 +121,17 @@ pub(crate) fn generate(item: &ItemStruct, cfg: &PartialConfig) -> syn::Result<To
     let all_fields_pub = fields.iter().all(|f| f.is_pub);
     let safe_to_pub_use = cfg.pub_use() && struct_pub && all_fields_pub;
 
-    let partial_reexport = quote! { pub use private::Partial as #partial_alias; };
+    let partial_reexport = if !is_private {
+        quote! { #partial_vis use private::Partial as #partial_alias; }
+    } else {
+        TokenStream::new()
+    };
     let top_reexport = if safe_to_pub_use {
         quote! { #[allow(unused_imports)] pub use #module_ident::#partial_alias; }
-    } else {
+    } else if !is_private {
         quote! { #[allow(unused_imports)] use #module_ident::#partial_alias; }
+    } else {
+        TokenStream::new()
     };
 
     Ok(quote! {
@@ -119,25 +157,26 @@ pub(crate) fn generate(item: &ItemStruct, cfg: &PartialConfig) -> syn::Result<To
                 // importing them here makes the builder/accessor signatures work.
                 use super::super::*;
                 #typenum_use
-                use ::#krate::{PartialThis, ThisPtr, UninitThis};
+                use ::#krate::{ThisPtr, UninitThis};
                 use ::core::mem::ManuallyDrop;
                 use ::core::ops::{BitAnd, BitOr};
 
                 #[derive(Debug)]
-                pub struct Partial<#n>(#n);
+                #partial_vis struct Partial<#n>(#n);
 
-                impl #struct_impl_gen PartialThis for #struct_ref_private #struct_where {
-                    type Partial<#n> = Partial<#n>;
-
-                    fn partial<#u>(this: #u) -> Self::Partial<#u>
+                // `partial` is an inherent method on the target struct, so a
+                // private/crate-private struct never leaks its builder through a
+                // public trait interface (E0446).
+                impl #struct_impl_gen #struct_ref_private #struct_where {
+                    pub fn partial<#u>(this: #u) -> Partial<#u>
                     where
-                        #u: ::#krate::UninitThis<Target = Self>,
+                        #u: ::#krate::UninitThis<Target = #struct_ref_private>,
                     {
                         Partial(this)
                     }
                 }
 
-                pub trait State: ThisPtr {
+                #partial_vis trait State: ThisPtr {
                     type Flags;
                     type Inited;
 
@@ -271,6 +310,7 @@ fn gen_markers(
     struct_generics: &syn::Generics,
     struct_type: &TokenStream,
     n: &Ident,
+    marker_vis: &TokenStream,
 ) -> TokenStream {
     let mut defs = TokenStream::new();
     // A generic struct's markers must carry the struct's parameters; `PhantomData`
@@ -291,7 +331,7 @@ fn gen_markers(
         };
         defs.extend(quote! {
             #[derive(Debug)]
-            pub struct #fname #marker_gen #body #marker_where;
+            #marker_vis struct #fname #marker_gen #body #marker_where;
         });
     }
     defs
