@@ -2,7 +2,7 @@
 //! parameters, and generic structs.
 
 mod complex_fields {
-    use partial_this::{DonePartial, PartialThis, partial};
+    use partial_this::{PartialThis, partial};
 
     #[partial]
     pub struct Complex {
@@ -30,7 +30,7 @@ mod complex_fields {
 }
 
 mod lifetime_struct {
-    use partial_this::{DonePartial, PartialThis, partial};
+    use partial_this::{PartialThis, partial};
 
     #[partial]
     pub struct Borrowed<'a> {
@@ -50,7 +50,7 @@ mod lifetime_struct {
 }
 
 mod generic_struct {
-    use partial_this::{DonePartial, PartialThis, partial};
+    use partial_this::{PartialThis, partial};
 
     #[partial]
     pub struct Generic<T> {
@@ -69,7 +69,7 @@ mod generic_struct {
 }
 
 mod bounded_generic {
-    use partial_this::{DonePartial, PartialThis, partial};
+    use partial_this::{PartialThis, partial};
 
     #[partial]
     pub struct Bounded<T>
@@ -91,7 +91,7 @@ mod bounded_generic {
 }
 
 mod lifetime_and_generic {
-    use partial_this::{DonePartial, PartialThis, partial};
+    use partial_this::{PartialThis, partial};
 
     #[partial]
     pub struct Both<'a, T> {
@@ -111,7 +111,7 @@ mod lifetime_and_generic {
 }
 
 mod generic_name_collision {
-    use partial_this::{DonePartial, PartialThis, partial};
+    use partial_this::{PartialThis, partial};
 
     #[partial]
     pub struct Collision<F, N, C, U, const INIT: usize> {
@@ -139,7 +139,7 @@ mod generic_name_collision {
 }
 
 mod tuple_struct {
-    use partial_this::{DonePartial, PartialThis, partial};
+    use partial_this::{PartialThis, partial};
 
     #[partial]
     pub struct Tuple(i32, f32);
@@ -148,7 +148,7 @@ mod tuple_struct {
     fn builds_tuple() {
         let p = Tuple::partial(Box::new_uninit());
         let mut a = p._0(1);
-        *a._0_mut() = 123;
+        a.set__0(123);
         let r = a._1(456.0).done();
         assert_eq!(r.0, 123);
         assert_eq!(r.1, 456.0);
@@ -156,7 +156,7 @@ mod tuple_struct {
 }
 
 mod generic_tuple {
-    use partial_this::{DonePartial, PartialThis, partial};
+    use partial_this::{PartialThis, partial};
 
     #[partial]
     pub struct GenTuple<T, U>(pub T, pub U);
@@ -172,7 +172,7 @@ mod generic_tuple {
 }
 
 mod private_field {
-    use partial_this::{DonePartial, PartialThis, partial};
+    use partial_this::{PartialThis, partial};
 
     #[partial]
     pub struct Mixed {
@@ -191,7 +191,7 @@ mod private_field {
 }
 
 mod no_pub_use {
-    use partial_this::{DonePartial, PartialThis, partial};
+    use partial_this::{PartialThis, partial};
 
     #[partial(pub_use = false)]
     pub struct NoExport {
@@ -200,9 +200,6 @@ mod no_pub_use {
 
     #[test]
     fn builds() {
-        // With `pub_use = false` the builder trait is not auto-imported; bring
-        // it into scope explicitly.
-        use no_export_partial::NoExport_uninit_a;
         let p = NoExport::partial(Box::new_uninit());
         let r = p.a(1).done();
         assert_eq!(r.a, 1);
@@ -210,7 +207,7 @@ mod no_pub_use {
 }
 
 mod private_module_export {
-    use partial_this::{DonePartial, PartialThis, partial};
+    use partial_this::{PartialThis, partial};
 
     #[partial(pub_use = false)]
     pub struct Holder {
@@ -220,12 +217,6 @@ mod private_module_export {
 
     #[test]
     fn builds() {
-        // With `pub_use = false` nothing is auto-imported. Bring the public
-        // field trait from the generated module and the private exports from
-        // the nested `private` module.
-        use holder_partial::Holder_uninit_a;
-        #[allow(unused_imports)]
-        use holder_partial::private::*;
         let p = Holder::partial(Box::new_uninit());
         let r = p.a(1).b(2.0).done();
         assert_eq!(r.a, 1);

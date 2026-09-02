@@ -2,13 +2,13 @@
 //!
 //! The [`partial`] attribute macro lets you build a struct field-by-field,
 //! while the type system guarantees that each field is initialized at most once
-//! and that [`done`](DonePartial::done) is only callable once every field has
+//! and that `done()` is only callable once every field has
 //! been set.
 //!
 //! # Example
 //!
 //! ```rust
-//! use partial_this::{partial, DonePartial, PartialThis};
+//! use partial_this::{partial, PartialThis};
 //!
 //! #[partial]
 //! #[derive(Debug)]
@@ -33,7 +33,7 @@
 //! reference, producing `Box<T>`, `T`, or `&mut T` respectively:
 //!
 //! ```rust
-//! use partial_this::{partial, DonePartial, PartialThis};
+//! use partial_this::{partial, PartialThis};
 //! use core::mem::MaybeUninit;
 //!
 //! #[partial]
@@ -57,7 +57,7 @@
 //! once**:
 //!
 //! ```rust
-//! use partial_this::{partial, DonePartial, PartialThis};
+//! use partial_this::{partial, PartialThis};
 //!
 //! #[partial]
 //! pub struct Foo {
@@ -81,7 +81,7 @@
 //! After a field is initialized you can read it or mutate it:
 //!
 //! ```rust
-//! use partial_this::{partial, DonePartial, PartialThis};
+//! use partial_this::{partial, PartialThis};
 //!
 //! #[partial]
 //! pub struct Foo {
@@ -91,8 +91,8 @@
 //!
 //! fn main() {
 //!     let mut p = Foo::partial(Box::new_uninit()).foo(1);
-//!     assert_eq!(*p.foo(), 1);
-//!     *p.foo_mut() = 123;
+//!     assert_eq!(*p.get_foo(), 1);
+//!     p.set_foo(123);
 //!     let foo = p.bar(2.0).done();
 //!     assert_eq!(foo.foo, 123);
 //! }
@@ -104,7 +104,7 @@
 //! lifetime-parameterized structs are also supported:
 //!
 //! ```rust
-//! use partial_this::{partial, DonePartial, PartialThis};
+//! use partial_this::{partial, PartialThis};
 //!
 //! #[partial]
 //! pub struct Bar(i32, f32);
@@ -136,12 +136,13 @@
 //! - **Field initialization methods**: each field has a builder method that can
 //!   be called in any order, and at most once (a second call is a compile time error).
 //! - **Field access methods**: after a field is initialized you can read it with
-//!   `field()` or get a mutable reference with `field_mut()`.
+//!   `get_field()`, mutate it with `get_field_mut()`, or assign with
+//!   `set_field(value)`.
 //! - **`done()`**: finalizes the builder once every field is initialized.
 //! - **Drop safety**: partially-built values drop already-initialized fields in
-//!   declaration order.
-//! - **Field visibility**: `pub` fields are re-exported; private fields are
-//!   collected into a nested `private` module.
+//!   reverse order of initialization (the last field set is dropped first).
+//! - **Field visibility**: the builder type `PartialStructName` is re-exported for a
+//!   struct `StructName`, and field methods are available directly on the builder.
 //!
 //! # Safety
 //!
@@ -155,13 +156,9 @@ extern crate alloc;
 extern crate self as partial_this;
 
 use alloc::{boxed::Box, rc::Rc, sync::Arc};
-use core::{
-    marker::{PhantomData, PhantomPinned},
-    mem::{ManuallyDrop, MaybeUninit},
-};
+use core::mem::MaybeUninit;
 
 pub use typenum;
-use typenum::{False, True};
 
 pub use partial_this_macro::partial;
 
@@ -293,537 +290,241 @@ mod uninit_this {
 
 /// A struct that can be partially constructed.
 ///
-/// Implemented by the [`partial`] macro for a struct.
-/// [`partial`](Self::partial) starts the builder with some uninitialized
-/// storage (`this`), returning a [`chain::Field`] chain that can be filled
-/// field-by-field and finally finalized with [`DonePartial::done`].
-pub trait PartialThis<Src> {
-    /// The builder type returned from [`partial`](Self::partial).
-    type Output;
+/// Implemented by the [`partial`] macro for a struct. [`partial`](Self::partial)
+/// starts the builder with some uninitialized storage, returning a builder value
+/// whose type is [`Self::Partial`].
+pub trait PartialThis {
+    /// The builder type for this struct, parameterized by the storage type `N`.
+    type Partial<N>;
 
     /// Starts building a value of `Self` inside the given uninitialized storage.
-    fn partial(this: Src) -> Self::Output;
+    fn partial<U>(this: U) -> Self::Partial<U>
+    where
+        U: UninitThis<Target = Self>;
 }
 
-/// Finalizes a partial builder once every field has been initialized.
-///
-/// Implemented for [`UninitThis`] sources and for [`chain::Field`] chains whose
-/// every field has been initialized (tracked at the type level).
-pub trait DonePartial {
-    /// The finalized, fully-initialized value.
-    type Output;
+/// Provides access to the underlying uninitialized storage of a builder node.
+pub trait ThisPtr {
+    /// The struct type being constructed.
+    type Target;
 
-    /// Assumes the target value is initialized and returns it.
-    fn done(self) -> Self::Output;
+    /// Borrows the underlying `MaybeUninit` storage.
+    fn this(&self) -> &MaybeUninit<Self::Target>;
+
+    /// Mutably borrows the underlying `MaybeUninit` storage.
+    fn this_mut(&mut self) -> &mut MaybeUninit<Self::Target>;
 }
 
-/// The type-level builder chain used by the `partial` macro.
-///
-/// Each struct field is represented as a [`Field`](crate::chain::Field) node;
-/// nodes are nested to form a linked list whose type encodes both the next field
-/// to initialize and which fields are currently initialized. The
-/// [`traits`](crate::chain::traits) module provides the field descriptors and
-/// chain-walking logic.
-pub mod chain {
-    use super::*;
+impl<U: UninitThis> ThisPtr for U {
+    type Target = U::Target;
 
-    /// A node in the partial-construction chain.
-    ///
-    /// - `const INIT` tracks (at the type level) whether this node's field has
-    ///   been initialized.
-    /// - `F` is the field descriptor (implements [`traits::Field`]).
-    /// - `N` is the rest of the chain (the already-built part).
-    #[derive(Debug)]
-    pub struct Field<const INIT: bool, F, N>(N, PhantomData<(F, PhantomPinned)>)
-    where
-        F: traits::Field<Target = N::Target>,
-        N: traits::ThisPtr;
-
-    impl<const INIT: bool, F, N> Field<INIT, F, N>
-    where
-        F: traits::Field<Target = N::Target>,
-        N: traits::ThisPtr,
-    {
-        /// Wraps `next` as a chain node
-        #[cfg_attr(not(debug_assertions), inline(always))]
-        pub const fn keep(next: N) -> Self {
-            Self(next, PhantomData)
-        }
+    #[cfg_attr(not(debug_assertions), inline(always))]
+    fn this(&self) -> &MaybeUninit<Self::Target> {
+        unsafe { U::get(self) }
     }
 
-    impl<F, N> Field<true, F, N>
-    where
-        F: traits::Field<Target = N::Target>,
-        N: traits::ThisPtr,
-    {
-        /// Marks the field as initialized and wraps the rest of the chain.
-        #[cfg_attr(not(debug_assertions), inline(always))]
-        pub const fn init(next: N) -> Self {
-            Self(next, PhantomData)
-        }
-    }
-
-    impl<F, N> Field<false, F, N>
-    where
-        F: traits::Field<Target = N::Target>,
-        N: traits::ThisPtr,
-    {
-        /// Marks the field as uninitialized and wraps the rest of the chain.
-        #[cfg_attr(not(debug_assertions), inline(always))]
-        pub const fn uninit(next: N) -> Self {
-            Self(next, PhantomData)
-        }
-    }
-
-    /// Traits that describe struct fields and drive the chain-walking logic.
-    pub mod traits {
-        use typenum::{IsEqual, U0, Unsigned};
-
-        use super::*;
-
-        impl<U: UninitThis> DonePartial for U {
-            type Output = U::Inited;
-
-            fn done(self) -> Self::Output {
-                unsafe { self.assume_init() }
-            }
-        }
-
-        impl<F, N> DonePartial for super::Field<true, F, N>
-        where
-            F: Field<Target = N::Target>,
-            N: ThisPtr,
-            N: DonePartial,
-        {
-            type Output = N::Output;
-
-            #[cfg_attr(not(debug_assertions), inline(always))]
-            fn done(self) -> Self::Output {
-                unsafe {
-                    let this = ManuallyDrop::new(self);
-                    let n = core::ptr::read(&this.0);
-                    n.done()
-                }
-            }
-        }
-
-        /// Describes a single struct field for the partial builder.
-        ///
-        /// Implemented by the `partial` macro for each field of the struct.
-        pub trait Field {
-            /// The struct type that owns this field.
-            type Target;
-            /// The field's type.
-            type Type;
-            /// A unique type-level id for this field ([`typenum`] unsigned).
-            type Id: Unsigned;
-
-            /// Drops the field's value if the type-level `INIT` flag is set.
-            unsafe fn drop<const INIT: bool>(this: &mut MaybeUninit<Self::Target>);
-
-            /// Writes `value` into the field.
-            unsafe fn init(this: &mut MaybeUninit<Self::Target>, value: Self::Type);
-
-            /// Borrows the initialized field value.
-            unsafe fn get(this: &MaybeUninit<Self::Target>) -> &Self::Type;
-
-            /// Mutably borrows the initialized field value.
-            unsafe fn get_mut(this: &mut MaybeUninit<Self::Target>) -> &mut Self::Type;
-        }
-
-        /// Provides access to the underlying uninitialized storage of a chain node.
-        pub trait ThisPtr {
-            /// The struct type being constructed.
-            type Target;
-            /// The field id of this node.
-            type Id: Unsigned;
-            /// The field id of the next node in the chain.
-            type NextId: Unsigned;
-
-            /// Borrows the underlying `MaybeUninit` storage.
-            fn this(this: &Self) -> &MaybeUninit<Self::Target>;
-
-            /// Mutably borrows the underlying `MaybeUninit` storage.
-            fn this_mut(this: &mut Self) -> &mut MaybeUninit<Self::Target>;
-        }
-
-        impl<U: UninitThis> ThisPtr for U {
-            type Id = U0;
-            type NextId = U0;
-            type Target = U::Target;
-
-            fn this(this: &Self) -> &MaybeUninit<Self::Target> {
-                unsafe { this.get() }
-            }
-            fn this_mut(this: &mut Self) -> &mut MaybeUninit<Self::Target> {
-                unsafe { this.get_mut() }
-            }
-        }
-
-        impl<const INIT: bool, F, N> ThisPtr for super::Field<INIT, F, N>
-        where
-            F: Field<Target = N::Target>,
-            N: ThisPtr,
-        {
-            type Id = F::Id;
-            type NextId = N::Id;
-            type Target = N::Target;
-
-            #[cfg_attr(not(debug_assertions), inline(always))]
-            fn this(this: &Self) -> &MaybeUninit<Self::Target> {
-                N::this(&this.0)
-            }
-
-            #[cfg_attr(not(debug_assertions), inline(always))]
-            fn this_mut(this: &mut Self) -> &mut MaybeUninit<Self::Target> {
-                N::this_mut(&mut this.0)
-            }
-        }
-
-        impl<const INIT: bool, F, N> Drop for super::Field<INIT, F, N>
-        where
-            F: Field<Target = N::Target>,
-            N: ThisPtr,
-        {
-            #[cfg_attr(not(debug_assertions), inline(always))]
-            fn drop(&mut self) {
-                unsafe { F::drop::<INIT>(N::this_mut(&mut self.0)) };
-            }
-        }
-
-        /// Drives a field-initialization operation across the chain.
-        ///
-        /// Given the value type `A`, the field id `I`, and the current chain
-        /// context `C`, it returns a chain where the field has been initialized.
-        pub trait MapInit<A, I, C>: ThisPtr {
-            /// The resulting chain after initialization.
-            type Result: ThisPtr<Target = Self::Target>;
-            /// The rest of the chain.
-            type Next;
-            /// The rest of the chain after initialization.
-            type NextResult;
-
-            /// Initializes the field with `value`, returning the new chain.
-            unsafe fn map_init(this: Self, value: A) -> Self::Result;
-
-            /// Marks the field initialized without writing a value.
-            unsafe fn assume_init(this: Self) -> Self::Result;
-        }
-
-        impl<A, I, T, U: UninitThis<Target = T>> MapInit<A, I, False> for U {
-            type Result = Self;
-            type Next = Self;
-            type NextResult = Self;
-
-            #[cfg_attr(not(debug_assertions), inline(always))]
-            unsafe fn map_init(_this: Self, _value: A) -> Self::Result {
-                unreachable!("never")
-            }
-
-            #[cfg_attr(not(debug_assertions), inline(always))]
-            unsafe fn assume_init(_this: Self) -> Self::Result {
-                unreachable!("never")
-            }
-        }
-
-        impl<const INIT: bool, A, F, I, N> MapInit<A, I, False> for super::Field<INIT, F, N>
-        where
-            F: Field<Target = N::Target>,
-            N: ThisPtr,
-            F::Id: IsEqual<I, Output = False>,
-            I: IsEqual<Self::NextId>,
-            I: IsEqual<N::Id>,
-            N: MapInit<A, I, <I as IsEqual<Self::NextId>>::Output>,
-        {
-            type Result = super::Field<INIT, F, N::Result>;
-            type Next = N;
-            type NextResult = N::Result;
-
-            #[cfg_attr(not(debug_assertions), inline(always))]
-            unsafe fn map_init(this: Self, value: A) -> Self::Result {
-                unsafe {
-                    let this = ManuallyDrop::new(this);
-                    let n = core::ptr::read(&this.0);
-                    super::Field::keep(N::map_init(n, value))
-                }
-            }
-
-            #[cfg_attr(not(debug_assertions), inline(always))]
-            unsafe fn assume_init(this: Self) -> Self::Result {
-                unsafe {
-                    let this = ManuallyDrop::new(this);
-                    let n = core::ptr::read(&this.0);
-                    super::Field::keep(N::assume_init(n))
-                }
-            }
-        }
-
-        impl<A, F, I, N> MapInit<A, I, True> for super::Field<false, F, N>
-        where
-            F: Field<Target = N::Target, Type = A>,
-            N: ThisPtr,
-            F::Id: IsEqual<I, Output = True>,
-            N: MapInit<A, I, False>,
-        {
-            type Result = super::Field<true, F, N>;
-            type Next = N;
-            type NextResult = N;
-
-            #[cfg_attr(not(debug_assertions), inline(always))]
-            unsafe fn map_init(mut this: Self, value: A) -> Self::Result {
-                unsafe {
-                    F::init(Self::this_mut(&mut this), value);
-                    let this = ManuallyDrop::new(this);
-                    let n = core::ptr::read(&this.0);
-                    super::Field::init(n)
-                }
-            }
-
-            #[cfg_attr(not(debug_assertions), inline(always))]
-            unsafe fn assume_init(this: Self) -> Self::Result {
-                unsafe {
-                    let this = ManuallyDrop::new(this);
-                    let n = core::ptr::read(&this.0);
-                    super::Field::init(n)
-                }
-            }
-        }
-
-        /// Reads an already-initialized field's value from the chain.
-        ///
-        /// Given the value type `A`, the field id `I` and the chain context `C`,
-        /// returns a reference to the initialized field.
-        pub trait GetField<A, I, C>: ThisPtr {
-            /// Borrows the initialized field value.
-            unsafe fn get<'a>(this: &'a Self) -> &'a A;
-
-            /// Mutably borrows the initialized field value.
-            unsafe fn get_mut<'a>(this: &'a mut Self) -> &'a mut A;
-        }
-
-        impl<const INIT: bool, A, F, I, N> GetField<A, I, False> for super::Field<INIT, F, N>
-        where
-            F: Field<Target = N::Target>,
-            N: ThisPtr,
-            F::Id: IsEqual<I, Output = False>,
-            I: IsEqual<Self::NextId>,
-            I: IsEqual<N::Id>,
-            N: GetField<A, I, <I as IsEqual<Self::NextId>>::Output>,
-        {
-            #[cfg_attr(not(debug_assertions), inline(always))]
-            unsafe fn get<'a>(this: &'a Self) -> &'a A {
-                unsafe { N::get(&this.0) }
-            }
-
-            #[cfg_attr(not(debug_assertions), inline(always))]
-            unsafe fn get_mut<'a>(this: &'a mut Self) -> &'a mut A {
-                unsafe { N::get_mut(&mut this.0) }
-            }
-        }
-
-        impl<A, F, I, N> GetField<A, I, True> for super::Field<true, F, N>
-        where
-            F: Field<Target = N::Target, Type = A>,
-            N: ThisPtr,
-            F::Id: IsEqual<I, Output = True>,
-        {
-            #[cfg_attr(not(debug_assertions), inline(always))]
-            unsafe fn get<'a>(this: &'a Self) -> &'a A {
-                unsafe { F::get(N::this(&this.0)) }
-            }
-
-            #[cfg_attr(not(debug_assertions), inline(always))]
-            unsafe fn get_mut<'a>(this: &'a mut Self) -> &'a mut A {
-                unsafe { F::get_mut(N::this_mut(&mut this.0)) }
-            }
-        }
+    #[cfg_attr(not(debug_assertions), inline(always))]
+    fn this_mut(&mut self) -> &mut MaybeUninit<Self::Target> {
+        unsafe { U::get_mut(self) }
     }
 }
 
 #[cfg(test)]
 #[allow(nonstandard_style)]
-pub mod test {
+pub mod test_reference {
+    use crate::PartialThis;
+
     #[derive(Debug)]
     pub struct Foo {
         pub foo: i32,
         pub bar: f32,
     }
 
-    use crate::{DonePartial, PartialThis};
-    use core::mem::MaybeUninit;
-
     pub use should_be_generated_by_macro::*;
     mod should_be_generated_by_macro {
-        use crate::{
-            PartialThis, UninitThis,
-            chain::{self},
-        };
+        use crate::ThisPtr;
 
-        use super::*;
+        #[derive(Debug)]
+        pub struct foo<N: ThisPtr<Target = super::Foo>>(N);
+        #[derive(Debug)]
+        pub struct bar<N: ThisPtr<Target = super::Foo>>(N);
 
-        impl<U: UninitThis<Target = Foo>> PartialThis<U> for Foo {
-            type Output = chain::Field<false, fields::bar, chain::Field<false, fields::foo, U>>;
+        impl<N: ThisPtr<Target = super::Foo>> ThisPtr for foo<N> {
+            type Target = super::Foo;
 
-            fn partial(this: U) -> Self::Output {
-                chain::Field::uninit(chain::Field::uninit(this))
+            fn this(&self) -> &core::mem::MaybeUninit<Self::Target> {
+                self.0.this()
+            }
+
+            fn this_mut(&mut self) -> &mut core::mem::MaybeUninit<Self::Target> {
+                self.0.this_mut()
             }
         }
 
-        mod fields {
-            use crate::chain::traits::Field;
+        impl<N: ThisPtr<Target = super::Foo>> ThisPtr for bar<N> {
+            type Target = super::Foo;
+
+            fn this(&self) -> &core::mem::MaybeUninit<Self::Target> {
+                self.0.this()
+            }
+
+            fn this_mut(&mut self) -> &mut core::mem::MaybeUninit<Self::Target> {
+                self.0.this_mut()
+            }
+        }
+
+        impl<N: ThisPtr<Target = super::Foo>> Drop for foo<N> {
+            fn drop(&mut self) {
+                unsafe { core::ptr::drop_in_place(&mut (*self.0.this_mut().as_mut_ptr()).foo) };
+            }
+        }
+
+        impl<N: ThisPtr<Target = super::Foo>> Drop for bar<N> {
+            fn drop(&mut self) {
+                unsafe { core::ptr::drop_in_place(&mut (*self.0.this_mut().as_mut_ptr()).bar) };
+            }
+        }
+
+        pub use private::Partial as PartialFoo;
+
+        mod private {
+            use super::*;
+            use crate::{PartialThis, ThisPtr, UninitThis};
+            use core::mem::ManuallyDrop;
+            use core::ops::{BitAnd, BitOr};
+            use typenum::{Or, Shleft, U0, U1, U2, U3};
 
             #[derive(Debug)]
-            pub struct foo;
-            #[derive(Debug)]
-            pub struct bar;
+            pub struct Partial<N>(N);
 
-            impl Field for foo {
-                type Target = super::Foo;
-                type Type = i32;
-                type Id = crate::typenum::U1;
+            impl PartialThis for super::super::Foo {
+                type Partial<N> = private::Partial<N>;
 
-                unsafe fn drop<const INIT: bool>(this: &mut std::mem::MaybeUninit<Self::Target>) {
-                    if INIT {
-                        unsafe { core::ptr::drop_in_place(&mut (*this.as_mut_ptr()).foo) };
+                fn partial<U>(this: U) -> Self::Partial<U>
+                where
+                    U: crate::UninitThis<Target = Self>,
+                {
+                    private::Partial(this)
+                }
+            }
+
+            pub trait State: ThisPtr<Target = super::super::Foo> {
+                type Flags;
+                type Inited;
+
+                unsafe fn assume_init(self) -> Self::Inited;
+            }
+
+            impl<U: UninitThis<Target = super::super::Foo>> State for U {
+                type Flags = U0;
+
+                type Inited = U::Inited;
+
+                unsafe fn assume_init(self) -> Self::Inited {
+                    unsafe { U::assume_init(self) }
+                }
+            }
+
+            impl<N> State for foo<N>
+            where
+                N: State,
+                N::Flags: BitOr<U1>,
+            {
+                type Flags = Or<N::Flags, U1>;
+                type Inited = N::Inited;
+
+                unsafe fn assume_init(self) -> Self::Inited {
+                    unsafe {
+                        let this = ManuallyDrop::new(self);
+                        core::ptr::read(&this.0).assume_init()
                     }
                 }
-
-                unsafe fn init(this: &mut std::mem::MaybeUninit<Self::Target>, value: Self::Type) {
-                    unsafe { core::ptr::write(&mut (*this.as_mut_ptr()).foo, value) }
-                }
-
-                unsafe fn get(this: &std::mem::MaybeUninit<Self::Target>) -> &Self::Type {
-                    unsafe { &(*this.as_ptr()).foo }
-                }
-
-                unsafe fn get_mut(
-                    this: &mut std::mem::MaybeUninit<Self::Target>,
-                ) -> &mut Self::Type {
-                    unsafe { &mut (*this.as_mut_ptr()).foo }
-                }
             }
 
-            impl Field for bar {
-                type Target = super::Foo;
-                type Type = f32;
-                type Id = crate::typenum::U2;
+            impl<N> State for bar<N>
+            where
+                N: State,
+                N::Flags: BitOr<Shleft<U1, U1>>,
+            {
+                type Flags = Or<N::Flags, U2>;
+                type Inited = N::Inited;
 
-                unsafe fn drop<const INIT: bool>(this: &mut std::mem::MaybeUninit<Self::Target>) {
-                    if INIT {
-                        unsafe { core::ptr::drop_in_place(&mut (*this.as_mut_ptr()).bar) };
+                unsafe fn assume_init(self) -> Self::Inited {
+                    unsafe {
+                        let this = ManuallyDrop::new(self);
+                        core::ptr::read(&this.0).assume_init()
                     }
                 }
-
-                unsafe fn init(this: &mut std::mem::MaybeUninit<Self::Target>, value: Self::Type) {
-                    unsafe { core::ptr::write(&mut (*this.as_mut_ptr()).bar, value) }
-                }
-
-                unsafe fn get(this: &std::mem::MaybeUninit<Self::Target>) -> &Self::Type {
-                    unsafe { &(*this.as_ptr()).bar }
-                }
-
-                unsafe fn get_mut(
-                    this: &mut std::mem::MaybeUninit<Self::Target>,
-                ) -> &mut Self::Type {
-                    unsafe { &mut (*this.as_mut_ptr()).bar }
-                }
-            }
-        }
-
-        pub use uninit_fields::*;
-        mod uninit_fields {
-            use super::*;
-            use crate::chain::{self, traits::MapInit};
-            use crate::typenum::{U1, U2};
-
-            pub trait Foo_uninit_foo<T> {
-                type Output;
-                fn foo(self, value: i32) -> Self::Output;
-                fn assume_init_foo(self) -> Self::Output;
-            }
-            pub trait Foo_uninit_bar<T> {
-                type Output;
-                fn bar(self, value: f32) -> Self::Output;
-                fn assume_init_bar(self) -> Self::Output;
             }
 
-            impl<const INIT: bool, F, N, C> Foo_uninit_foo<C> for chain::Field<INIT, F, N>
+            impl<N> Partial<N>
             where
-                N: chain::traits::ThisPtr<Target = Foo>,
-                F: chain::traits::Field<Target = Foo>,
-                Self: MapInit<i32, U1, C>,
+                N: ThisPtr<Target = super::super::Foo> + State,
+                N::Flags: BitAnd<U1, Output = U0>,
             {
-                type Output = <Self as MapInit<i32, U1, C>>::Result;
-
-                fn foo(self, value: i32) -> Self::Output {
-                    unsafe { Self::map_init(self, value) }
+                pub unsafe fn assume_init_foo(self) -> Partial<foo<N>> {
+                    Partial(foo(self.0))
                 }
 
-                fn assume_init_foo(self) -> Self::Output {
-                    unsafe { Self::assume_init(self) }
+                pub fn foo(mut self, value: i32) -> Partial<foo<N>> {
+                    unsafe { core::ptr::write(&mut (*self.0.this_mut().as_mut_ptr()).foo, value) };
+                    Partial(foo(self.0))
                 }
             }
 
-            impl<const INIT: bool, F, N, C> Foo_uninit_bar<C> for chain::Field<INIT, F, N>
+            impl<N> Partial<N>
             where
-                N: chain::traits::ThisPtr<Target = Foo>,
-                F: chain::traits::Field<Target = Foo>,
-                Self: MapInit<f32, U2, C>,
+                N: ThisPtr<Target = super::super::Foo> + State,
+                N::Flags: BitAnd<U2, Output = U0>,
             {
-                type Output = <Self as MapInit<f32, U2, C>>::Result;
-
-                fn bar(self, value: f32) -> Self::Output {
-                    unsafe { Self::map_init(self, value) }
+                pub unsafe fn assume_init_bar(self) -> Partial<bar<N>> {
+                    Partial(bar(self.0))
                 }
 
-                fn assume_init_bar(self) -> Self::Output {
-                    unsafe { Self::assume_init(self) }
+                pub fn bar(mut self, value: f32) -> Partial<bar<N>> {
+                    unsafe { core::ptr::write(&mut (*self.0.this_mut().as_mut_ptr()).bar, value) };
+                    Partial(bar(self.0))
                 }
             }
-        }
 
-        pub use inited_fields::*;
-        mod inited_fields {
-            use super::*;
-            use crate::chain::{self, traits::GetField};
-            use crate::typenum::{U1, U2};
-
-            pub trait Foo_inited_foo<T> {
-                fn foo(&self) -> &i32;
-                fn foo_mut(&mut self) -> &mut i32;
-            }
-            pub trait Foo_inited_bar<T> {
-                fn bar(&self) -> &f32;
-                fn bar_mut(&mut self) -> &mut f32;
-            }
-
-            impl<const INIT: bool, F, N, C> Foo_inited_foo<C> for chain::Field<INIT, F, N>
+            impl<N> Partial<N>
             where
-                N: chain::traits::ThisPtr<Target = Foo>,
-                F: chain::traits::Field<Target = Foo>,
-                Self: GetField<i32, U1, C>,
+                N: ThisPtr<Target = super::super::Foo> + State,
+                N::Flags: BitAnd<U1, Output = U1>,
             {
-                fn foo(&self) -> &i32 {
-                    unsafe { Self::get(self) }
+                pub fn set_foo(&mut self, value: i32) {
+                    *self.get_foo_mut() = value;
                 }
-
-                fn foo_mut(&mut self) -> &mut i32 {
-                    unsafe { Self::get_mut(self) }
+                pub fn get_foo(&self) -> &i32 {
+                    unsafe { &(*self.0.this().as_ptr()).foo }
+                }
+                pub fn get_foo_mut(&mut self) -> &mut i32 {
+                    unsafe { &mut (*self.0.this_mut().as_mut_ptr()).foo }
                 }
             }
 
-            impl<const INIT: bool, F, N, C> Foo_inited_bar<C> for chain::Field<INIT, F, N>
+            impl<N> Partial<N>
             where
-                N: chain::traits::ThisPtr<Target = Foo>,
-                F: chain::traits::Field<Target = Foo>,
-                Self: GetField<f32, U2, C>,
+                N: ThisPtr<Target = super::super::Foo> + State,
+                N::Flags: BitAnd<U2, Output = U2>,
             {
-                fn bar(&self) -> &f32 {
-                    unsafe { Self::get(self) }
+                pub fn set_bar(&mut self, value: f32) {
+                    *self.get_bar_mut() = value;
                 }
+                pub fn get_bar(&self) -> &f32 {
+                    unsafe { &(*self.0.this().as_ptr()).bar }
+                }
+                pub fn get_bar_mut(&mut self) -> &mut f32 {
+                    unsafe { &mut (*self.0.this_mut().as_mut_ptr()).bar }
+                }
+            }
 
-                fn bar_mut(&mut self) -> &mut f32 {
-                    unsafe { Self::get_mut(self) }
+            impl<N> Partial<N>
+            where
+                N: State<Flags = U3>,
+            {
+                pub fn done(self) -> N::Inited {
+                    unsafe { self.0.assume_init() }
                 }
             }
         }
@@ -831,36 +532,17 @@ pub mod test {
 
     #[test]
     fn test1() {
-        let foo = Foo::partial(Box::new_uninit());
-        let mut a = foo.foo(1);
-        *a.foo_mut() = 123;
-        let foo = a.bar(456.0).done();
-        println!("r: {:?}", foo);
-    }
-
-    #[test]
-    fn test2() {
-        let mut foo = MaybeUninit::uninit();
-        let foo = Foo::partial(&mut foo);
-        let mut a = foo.foo(1);
-        *a.foo_mut() = 123;
-        let foo = a.bar(456.0).done();
-        println!("r: {:?}", foo);
-    }
-
-    #[test]
-    fn test3() {
-        let foo = Foo::partial(MaybeUninit::uninit());
-        let mut a = foo.foo(1);
-        *a.foo_mut() = 123;
-        let foo = a.bar(456.0).done();
-        println!("r: {:?}", foo);
+        let a = Foo::partial(Box::new_uninit());
+        let mut a = a.foo(1);
+        a.set_foo(123);
+        let a = a.bar(456.0).done();
+        assert_eq!(a.foo, 123);
+        assert_eq!(a.bar, 456.0)
     }
 }
 
 #[cfg(test)]
-#[allow(nonstandard_style)]
-pub mod test1 {
+pub mod test_macro {
     use super::*;
 
     #[partial]
@@ -871,11 +553,11 @@ pub mod test1 {
 
     #[test]
     fn macro_generates_partial() {
-        let foo = Foo::partial(Box::new_uninit());
-        let mut a = foo.foo(1);
-        *a.foo_mut() = 123;
-        let foo = a.bar(456.0).done();
-        assert_eq!(foo.foo, 123);
-        assert_eq!(foo.bar, 456.0);
+        let a = Foo::partial(Box::new_uninit());
+        let mut a = a.foo(1);
+        a.set_foo(123);
+        let a = a.bar(456.0).done();
+        assert_eq!(a.foo, 123);
+        assert_eq!(a.bar, 456.0);
     }
 }
