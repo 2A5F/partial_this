@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-09-03
+
+### Added
+
+- Add the `CtorComplete<T>` trait and implement it for the generated builder, so
+  `done()` can be used generically. It uses a generic type parameter rather than
+  an associated type, so implementing the trait never leaks the builder's
+  private state through a public trait interface.
+
+### Changed
+
+- The `#[partial]` macro now emits a `CtorComplete` impl for the builder in
+  addition to the inherent `done()` method.
+
 ## [0.3.0] - 2026-09-02
 
 ### Added

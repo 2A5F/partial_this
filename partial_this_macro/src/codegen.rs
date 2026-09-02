@@ -610,7 +610,12 @@ fn gen_accessor_impls(
     defs
 }
 
-/// Generates the `done` impl that finalizes the builder once all fields are set.
+/// Generates the `done` impls that finalize the builder once all fields are set.
+///
+/// `done()` is available both as an inherent method and through the `CtorComplete`
+/// trait. The trait takes the produced type as a generic parameter rather than an
+/// associated type, so implementing it for the generated builder never leaks the
+/// builder's private state through a public trait interface.
 fn gen_done_impl(
     krate: &Ident,
     struct_generics: &syn::Generics,
@@ -632,6 +637,13 @@ fn gen_done_impl(
             #[cfg_attr(not(debug_assertions), inline(always))]
             pub fn done(self) -> <#n as State>::Inited {
                 unsafe { self.0.assume_init() }
+            }
+        }
+
+        impl #impl_gen ::#krate::CtorComplete<<#n as State>::Inited> for Partial<#n> #impl_where {
+            #[cfg_attr(not(debug_assertions), inline(always))]
+            fn done(self) -> <#n as State>::Inited {
+                self.done()
             }
         }
     }
