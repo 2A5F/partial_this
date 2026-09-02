@@ -103,7 +103,9 @@ use config::PartialConfig;
 ///   is renamed in `Cargo.toml`.
 /// - `pub_use = true|false` — whether to re-export the generated `PartialXxx`
 ///   builder type with `pub use`. Defaults to `true`; set to `false` to keep it
-///   module-local.
+///   module-local. Even when `true`, if the struct or any field is not `pub`
+///   (which would leak a private type into a public interface), the re-export
+///   falls back to a module-local `use`.
 #[proc_macro_attribute]
 pub fn partial(attr: TokenStream, item: TokenStream) -> TokenStream {
     let item = parse_macro_input!(item as ItemStruct);

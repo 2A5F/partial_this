@@ -49,8 +49,16 @@ pub(crate) fn generate(item: &ItemStruct, cfg: &PartialConfig) -> syn::Result<To
     let accessor_impls = gen_accessor_impls(&krate, &fields, struct_generics, &struct_type, n);
     let done_impl = gen_done_impl(&krate, struct_generics, &struct_type, n, all_mask);
 
+    // A fully `pub` struct whose fields are all `pub` can safely re-export the
+    // generated builder type. If any private type would leak into a public
+    // interface (a private struct, or a non-`pub` field exposing a private
+    // type), fall back to a module-local `use` instead of `pub use`.
+    let struct_pub = matches!(item.vis, syn::Visibility::Public(_));
+    let all_fields_pub = fields.iter().all(|f| f.is_pub);
+    let safe_to_pub_use = cfg.pub_use() && struct_pub && all_fields_pub;
+
     let partial_reexport = quote! { pub use private::Partial as #partial_alias; };
-    let top_reexport = if cfg.pub_use() {
+    let top_reexport = if safe_to_pub_use {
         quote! { pub use #module_ident::#partial_alias; }
     } else {
         quote! { use #module_ident::#partial_alias; }
@@ -60,7 +68,9 @@ pub(crate) fn generate(item: &ItemStruct, cfg: &PartialConfig) -> syn::Result<To
         #item
         #[allow(nonstandard_style)]
         mod #module_ident {
-            use super::#struct_ident;
+            // Bring the struct and any custom field types from the parent
+            // module into scope.
+            use super::*;
             use ::#krate::ThisPtr;
 
             #markers
@@ -73,7 +83,9 @@ pub(crate) fn generate(item: &ItemStruct, cfg: &PartialConfig) -> syn::Result<To
 
             mod private {
                 use super::*;
-                use super::super::#struct_ident;
+                // Field types live in the parent of the generated module; glob
+                // importing them here makes the builder/accessor signatures work.
+                use super::super::*;
                 #typenum_use
                 use ::#krate::{PartialThis, ThisPtr, UninitThis};
                 use ::core::mem::ManuallyDrop;
@@ -127,6 +139,8 @@ struct FieldInfo {
     ty: Type,
     /// Field index, starting at `1`.
     index: usize,
+    /// Whether the field is declared `pub`.
+    is_pub: bool,
 }
 
 fn collect_fields(item: &ItemStruct) -> syn::Result<Vec<FieldInfo>> {
@@ -146,6 +160,7 @@ fn collect_fields(item: &ItemStruct) -> syn::Result<Vec<FieldInfo>> {
                     access,
                     ty: field.ty.clone(),
                     index: i + 1,
+                    is_pub: matches!(field.vis, syn::Visibility::Public(_)),
                 });
             }
         }
@@ -163,6 +178,7 @@ fn collect_fields(item: &ItemStruct) -> syn::Result<Vec<FieldInfo>> {
                     access,
                     ty: field.ty.clone(),
                     index: i + 1,
+                    is_pub: matches!(field.vis, syn::Visibility::Public(_)),
                 });
             }
         }
