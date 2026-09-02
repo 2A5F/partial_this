@@ -157,7 +157,7 @@ pub(crate) fn generate(item: &ItemStruct, cfg: &PartialConfig) -> syn::Result<To
                 // importing them here makes the builder/accessor signatures work.
                 use super::super::*;
                 #typenum_use
-                use ::#krate::{ThisPtr, UninitThis};
+                use ::#krate::{ThisPtr, AnyUninit};
                 use ::core::mem::ManuallyDrop;
                 use ::core::ops::{BitAnd, BitOr};
 
@@ -170,7 +170,7 @@ pub(crate) fn generate(item: &ItemStruct, cfg: &PartialConfig) -> syn::Result<To
                 impl #struct_impl_gen #struct_ref_private #struct_where {
                     pub fn partial<#u>(this: #u) -> Partial<#u>
                     where
-                        #u: ::#krate::UninitThis<Target = #struct_ref_private>,
+                        #u: ::#krate::AnyUninit<Target = #struct_ref_private>,
                     {
                         Partial(this)
                     }
@@ -441,17 +441,17 @@ fn gen_state_blanket(
 ) -> TokenStream {
     let (impl_gen, impl_where) = impl_parts(
         struct_generics,
-        &[quote!(#u: ::#krate::UninitThis<Target = #struct_type>)],
+        &[quote!(#u: ::#krate::AnyUninit<Target = #struct_type>)],
         &[],
     );
     quote! {
         impl #impl_gen State for #u #impl_where {
             type Flags = U0;
-            type Inited = <#u as ::#krate::UninitThis>::Inited;
+            type Inited = <#u as ::#krate::AnyUninit>::Inited;
 
             #[cfg_attr(not(debug_assertions), inline(always))]
             unsafe fn assume_init(self) -> Self::Inited {
-                unsafe { <#u as ::#krate::UninitThis>::assume_init(self) }
+                unsafe { <#u as ::#krate::AnyUninit>::assume_init(self) }
             }
         }
     }
@@ -539,6 +539,7 @@ fn gen_builder_impls(
         );
         defs.extend(quote! {
             impl #impl_gen Partial<#n> #impl_where {
+                #[doc = "Marks the field as initialized without writing a value.\n\n# Safety\n\nThe field's storage must already contain a valid value."]
                 #[cfg_attr(not(debug_assertions), inline(always))]
                 pub unsafe fn #assume_name(self) -> Partial<#mty> {
                     Partial(#ctor)

@@ -1,6 +1,8 @@
 //! Integration tests covering complex field types, structs with lifetime
 //! parameters, and generic structs.
 
+#![allow(clippy::box_collection)]
+
 mod complex_fields {
     use partial_this::partial;
 
