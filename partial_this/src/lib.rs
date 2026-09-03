@@ -21,7 +21,7 @@
 //!         .with_foo(1)
 //!         .with_bar(1.0)
 //!         .done();
-//! 
+//!
 //!     assert_eq!(foo.foo, 1);
 //!     assert_eq!(foo.bar, 1.0);
 //! }
@@ -48,13 +48,13 @@
 //!         .with_foo(1)
 //!         .with_bar(2.0)
 //!         .done();
-//! 
+//!
 //!     // From MaybeUninit<T>
 //!     let b: Foo = Foo::partial(MaybeUninit::uninit())
 //!         .with_foo(1)
 //!         .with_bar(2.0)
 //!         .done();
-//! 
+//!
 //!     // From &mut MaybeUninit<T>
 //!     let mut buf = MaybeUninit::uninit();
 //!     let c: &mut Foo = Foo::partial(&mut buf)
@@ -69,25 +69,33 @@
 //!
 //! Each field's builder method can be called in **any order**, but **at most
 //! once**:
-//! 
+//!
 //! ```rust
 //! # use partial_this::partial;
-//! # 
+//! #
 //! #[partial]
 //! pub struct Foo {
 //!     pub foo: i32,
 //!     pub bar: f32,
 //! }
 //! # fn main() {
-//! 
+//!
 //! let p = Foo::partial(Box::new_uninit());
-//! # _ = p;
+//!
+//! let p = p.with_bar(1.0);
+//! let p = p.with_foo(1);
+//!
+//! let foo = p.done();
+//! assert_eq!(foo.foo, 1);
+//! assert_eq!(foo.bar, 1.0);
 //! # }
 //! ```
-//! 
+//!
+//! A second call is rejected at compile time:
+//!
 //! ```compile_fail
 //! # use partial_this::partial;
-//! # 
+//! #
 //! # #[partial]
 //! # pub struct Foo {
 //! #     pub foo: i32,
@@ -101,28 +109,84 @@
 //! // Error: method cannot be called on `...` due to unsatisfied trait bounds
 //! # }
 //! ```
+//! ### Emplace
+//! Some fields are awkward to build from a ready-made value. Use
+//! `emplace_field` to initialize one in place — it hands your closure a
+//! `&mut MaybeUninit<T>` to write into.  
+//! This is especially useful when a field
+//! is itself a `#[partial]` struct: build it directly inside the parent's
+//! storage, so no intermediate allocation is needed:
 //!
 //! ```rust
 //! # use partial_this::partial;
-//! # 
-//! # #[partial]
-//! # pub struct Foo {
-//! #     pub foo: i32,
-//! #     pub bar: f32,
-//! # }
+//! # use core::mem::MaybeUninit;
 //! #
-//! # fn main() {
-//! # let p = Foo::partial(Box::new_uninit());
-//! #
-//! let p = p.with_bar(1.0);
-//! let p = p.with_foo(1); 
-//! // `foo` was not set yet, so this is allowed
+//! #[partial]
+//! pub struct Point {
+//!     pub x: i32,
+//!     pub y: i32,
+//! }
 //!
-//! let foo = p.done();
-//! assert_eq!(foo.foo, 1);
-//! assert_eq!(foo.bar, 1.0);
+//! #[partial]
+//! pub struct Line {
+//!     pub start: Point,
+//!     pub end: Point,
+//! }
+//!
+//! # fn main() {
+//! // Place `Point` values directly inside `Line`'s storage.
+//! let line = Line::partial(Box::new_uninit())
+//!     .emplace_start(|slot: &mut MaybeUninit<Point>| {
+//!         // placement new
+//!         Point::partial(slot).with_x(1).with_y(2).done()
+//!     })
+//!     // or just write
+//!     .emplace_end(|slot| slot.write(Point { x: 3, y: 4 }))
+//!     .done();
+//!
+//! assert_eq!((line.start.x, line.start.y), (1, 2));
+//! assert_eq!((line.end.x, line.end.y), (3, 4));
 //! # }
 //! ```
+//!
+//! > **Note:** You can write a placement-new constructor to simplify usage, but
+//! > that is outside the scope of this crate.
+//! > ```rust
+//! > # use partial_this::{partial, AnyUninit};
+//! > # use core::mem::MaybeUninit;
+//! > #
+//! > # #[partial]
+//! > # pub struct Point {
+//! > #     pub x: i32,
+//! > #     pub y: i32,
+//! > # }
+//! > #
+//! > impl Point {
+//! >     pub fn new_in<U>(place: U, x: i32, y: i32) -> U::Inited
+//! >     where
+//! >         U: AnyUninit<Target = Self>,
+//! >     {
+//! >         // perhaps some complex calculations
+//! >         Self::partial(place).with_x(x).with_y(y).done()
+//! >     }
+//! > }
+//! > # 
+//! > # #[partial]
+//! > # pub struct Line {
+//! > #     pub start: Point,
+//! > #     pub end: Point,
+//! > # }
+//! > 
+//! > # fn main() {
+//! > let line = Line::partial(Box::new_uninit())
+//! >     .emplace_start(|slot| Point::new_in(slot, 1, 2))
+//! >     .emplace_end(|slot| Point::new_in(slot, 3, 4))
+//! >     .done();
+//! > #
+//! > # assert_eq!((line.start.x, line.start.y), (1, 2));
+//! > # assert_eq!((line.end.x, line.end.y), (3, 4));
+//! > # }
+//! > ```
 //!
 //! # Field access
 //!
@@ -136,7 +200,7 @@
 //!     pub foo: i32,
 //!     pub bar: f32,
 //! }
-//! 
+//!
 //! # fn main() {
 //! let mut p = Foo::partial(Box::new_uninit())
 //!     .with_foo(1);
@@ -167,7 +231,7 @@
 //!     .with_0(1)
 //!     .with_1(2.0)
 //!     .done();
-//! 
+//!
 //! assert_eq!(bar.0, 1);
 //! assert_eq!(bar.1, 2.0);
 //! # }
@@ -181,7 +245,7 @@
 //!     pub name: &'a str,
 //!     pub value: T,
 //! }
-//! 
+//!
 //! # fn main() {
 //! let pair = Pair::<String>::partial(Box::new_uninit())
 //!     .with_name("x")
