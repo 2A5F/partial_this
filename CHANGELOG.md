@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-09-03
+
+### Changed
+
+- Drop the `_` prefix from tuple-field method names: `with_0`, `set_0`, `get_0`,
+  etc. instead of `with__0`, `set__0`, `get__0`.
+
 ## [0.4.0] - 2026-09-03
 
 ### Changed

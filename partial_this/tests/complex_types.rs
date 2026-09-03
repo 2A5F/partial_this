@@ -149,9 +149,9 @@ mod tuple_struct {
     #[test]
     fn builds_tuple() {
         let p = Tuple::partial(Box::new_uninit());
-        let mut a = p.with__0(1);
-        a.set__0(123);
-        let r = a.with__1(456.0).done();
+        let mut a = p.with_0(1);
+        a.set_0(123);
+        let r = a.with_1(456.0).done();
         assert_eq!(r.0, 123);
         assert_eq!(r.1, 456.0);
     }
@@ -166,8 +166,8 @@ mod generic_tuple {
     #[test]
     fn builds_generic_tuple() {
         let p = GenTuple::<String, i32>::partial(Box::new_uninit());
-        let a = p.with__0(String::from("x"));
-        let r = a.with__1(1).done();
+        let a = p.with_0(String::from("x"));
+        let r = a.with_1(1).done();
         assert_eq!(r.0, "x");
         assert_eq!(r.1, 1);
     }
