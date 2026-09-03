@@ -29,8 +29,8 @@ fn drops_in_reverse_init_order() {
     DROP_ORDER.with(|v| v.borrow_mut().clear());
 
     let p = S::partial(Box::new_uninit());
-    let p = p.a(Droppable("a"));
-    let p = p.b(Droppable("b"));
+    let p = p.with_a(Droppable("a"));
+    let p = p.with_b(Droppable("b"));
     drop(p);
 
     let order = DROP_ORDER.with(|v| v.borrow().clone());

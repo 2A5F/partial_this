@@ -504,7 +504,8 @@ fn gen_state_impls(
     defs
 }
 
-/// Generates the builder impls: `field(value)` and `assume_init_field`.
+/// Generates the builder impls: `uninit_field`, `assume_init_field`,
+/// `with_field`, and `emplace_field`.
 fn gen_builder_impls(
     krate: &Ident,
     fields: &[FieldInfo],
@@ -516,6 +517,16 @@ fn gen_builder_impls(
 ) -> TokenStream {
     let mut defs = TokenStream::new();
     let is_generic = !struct_generics.params.is_empty();
+    // The `emplace_field` closure takes a higher-ranked lifetime; pick a name
+    // that never collides with the struct's own lifetime parameters.
+    let mut used_lts: HashSet<String> = HashSet::new();
+    for param in &struct_generics.params {
+        if let GenericParam::Lifetime(lp) = param {
+            used_lts.insert(lp.lifetime.ident.to_string());
+        }
+    }
+    let lt_ident = unique_ident("__pt", &mut used_lts);
+    let lt = syn::Lifetime::new(&format!("'{}", lt_ident), Span::call_site());
     for f in fields {
         let fname = &f.name;
         let fty = &f.ty;
@@ -523,6 +534,9 @@ fn gen_builder_impls(
         let mask = mask_ty(f.index);
         let mty = marker_ty_super(fname, ty_args, n);
         let assume_name = format_ident!("assume_init_{}", fname);
+        let uninit_name = format_ident!("uninit_{}", fname);
+        let with_name = format_ident!("with_{}", fname);
+        let emplace_name = format_ident!("emplace_{}", fname);
         let ctor = if is_generic {
             quote!(super::#fname(self.0, ::core::marker::PhantomData))
         } else {
@@ -546,7 +560,15 @@ fn gen_builder_impls(
                 }
 
                 #[cfg_attr(not(debug_assertions), inline(always))]
-                pub fn #fname(mut self, #value_name: #fty) -> Partial<#mty> {
+                pub fn #uninit_name(&mut self) -> &mut ::core::mem::MaybeUninit<#fty> {
+                    unsafe {
+                        let ptr: *mut _ = &mut (*self.0.this_mut().as_mut_ptr()).#access;
+                        &mut *ptr.cast()
+                    }
+                }
+
+                #[cfg_attr(not(debug_assertions), inline(always))]
+                pub fn #with_name(mut self, #value_name: #fty) -> Partial<#mty> {
                     unsafe {
                         ::core::ptr::write(
                             &mut (*self.0.this_mut().as_mut_ptr()).#access,
@@ -555,13 +577,24 @@ fn gen_builder_impls(
                     };
                     Partial(#ctor)
                 }
+
+                #[cfg_attr(not(debug_assertions), inline(always))]
+                pub fn #emplace_name(
+                    mut self,
+                    init: impl for<#lt> FnOnce(
+                        &#lt mut ::core::mem::MaybeUninit<#fty>,
+                    ) -> &#lt mut #fty,
+                ) -> Partial<#mty> {
+                    let _ = init(self.#uninit_name());
+                    Partial(#ctor)
+                }
             }
         });
     }
     defs
 }
 
-/// Generates the accessor impls: `get_field`, `get_field_mut`, `set_field`.
+/// Generates the accessor impls: `get_field`, `get_mut_field`, `set_field`.
 fn gen_accessor_impls(
     krate: &Ident,
     fields: &[FieldInfo],
@@ -578,7 +611,7 @@ fn gen_accessor_impls(
         let mask = mask_ty(f.index);
         let set_name = format_ident!("set_{}", fname);
         let get_name = format_ident!("get_{}", fname);
-        let get_mut_name = format_ident!("get_{}_mut", fname);
+        let get_mut_name = format_ident!("get_mut_{}", fname);
         let (impl_gen, impl_where) = impl_parts(
             struct_generics,
             &[quote!(#n)],
@@ -591,8 +624,9 @@ fn gen_accessor_impls(
         defs.extend(quote! {
             impl #impl_gen Partial<#n> #impl_where {
                 #[cfg_attr(not(debug_assertions), inline(always))]
-                pub fn #set_name(&mut self, #value_name: #fty) {
+                pub fn #set_name(&mut self, #value_name: #fty) -> &mut Self {
                     *self.#get_mut_name() = #value_name;
+                    self
                 }
 
                 #[cfg_attr(not(debug_assertions), inline(always))]

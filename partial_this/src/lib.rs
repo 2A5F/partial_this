@@ -19,8 +19,8 @@
 //!
 //! fn main() {
 //!     let foo = Foo::partial(Box::new_uninit())
-//!         .foo(1)
-//!         .bar(1.0)
+//!         .with_foo(1)
+//!         .with_bar(1.0)
 //!         .done();
 //!     assert_eq!(foo.foo, 1);
 //!     assert_eq!(foo.bar, 1.0);
@@ -43,10 +43,10 @@
 //! }
 //!
 //! fn main() {
-//!     let a: Box<Foo> = Foo::partial(Box::new_uninit()).foo(1).bar(2.0).done();
-//!     let b: Foo = Foo::partial(MaybeUninit::uninit()).foo(1).bar(2.0).done();
+//!     let a: Box<Foo> = Foo::partial(Box::new_uninit()).with_foo(1).with_bar(2.0).done();
+//!     let b: Foo = Foo::partial(MaybeUninit::uninit()).with_foo(1).with_bar(2.0).done();
 //!     let mut buf = MaybeUninit::uninit();
-//!     let c: &mut Foo = Foo::partial(&mut buf).foo(1).bar(2.0).done();
+//!     let c: &mut Foo = Foo::partial(&mut buf).with_foo(1).with_bar(2.0).done();
 //!     let _ = (a, b, c);
 //! }
 //! ```
@@ -68,8 +68,8 @@
 //! fn main() {
 //!     // Fields can be set in any order.
 //!     let p = Foo::partial(Box::new_uninit());
-//!     let p = p.bar(1.0);
-//!     let p = p.foo(1); // `foo` was not set yet, so this is allowed
+//!     let p = p.with_bar(1.0);
+//!     let p = p.with_foo(1); // `foo` was not set yet, so this is allowed
 //!     let foo = p.done();
 //!     assert_eq!(foo.foo, 1);
 //!     assert_eq!(foo.bar, 1.0);
@@ -90,10 +90,10 @@
 //! }
 //!
 //! fn main() {
-//!     let mut p = Foo::partial(Box::new_uninit()).foo(1);
+//!     let mut p = Foo::partial(Box::new_uninit()).with_foo(1);
 //!     assert_eq!(*p.get_foo(), 1);
 //!     p.set_foo(123);
-//!     let foo = p.bar(2.0).done();
+//!     let foo = p.with_bar(2.0).done();
 //!     assert_eq!(foo.foo, 123);
 //! }
 //! ```
@@ -116,13 +116,13 @@
 //! }
 //!
 //! fn main() {
-//!     let bar = Bar::partial(Box::new_uninit())._0(1)._1(2.0).done();
+//!     let bar = Bar::partial(Box::new_uninit()).with__0(1).with__1(2.0).done();
 //!     assert_eq!(bar.0, 1);
 //!     assert_eq!(bar.1, 2.0);
 //!
 //!     let pair = Pair::<String>::partial(Box::new_uninit())
-//!         .name("x")
-//!         .value(String::from("y"))
+//!         .with_name("x")
+//!         .with_value(String::from("y"))
 //!         .done();
 //!     assert_eq!(pair.name, "x");
 //!     assert_eq!(pair.value, "y");
@@ -133,10 +133,11 @@
 //!
 //! - **Multiple partial sources**: `Box::new_uninit()`, `MaybeUninit::uninit()`
 //!   or `&mut MaybeUninit` all work as the initial storage.
-//! - **Field initialization methods**: each field has a builder method that can
-//!   be called in any order, and at most once (a second call is a compile time error).
+//! - **Field initialization methods**: each field offers `with_field(value)`,
+//!   `emplace_field(init)`, and `uninit_field()`; the builder methods can be
+//!   called in any order, and at most once (a second call is a compile time error).
 //! - **Field access methods**: after a field is initialized you can read it with
-//!   `get_field()`, mutate it with `get_field_mut()`, or assign with
+//!   `get_field()`, mutate it with `get_mut_field()`, or assign with
 //!   `set_field(value)`.
 //! - **`done()`**: finalizes the builder once every field is initialized, both
 //!   as an inherent method and through the [`CtorComplete`] trait.
@@ -181,8 +182,8 @@ pub use typenum;
 ///
 /// fn main() {
 ///     let foo = Foo::partial(Box::new_uninit())
-///         .a(1)
-///         .b(2.0)
+///         .with_a(1)
+///         .with_b(2.0)
 ///         .done();
 ///     assert_eq!(foo.a, 1);
 ///     assert_eq!(foo.b, 2.0);
@@ -205,11 +206,11 @@ pub use typenum;
 /// }
 ///
 /// fn main() {
-///     let boxed: Box<Foo> = Foo::partial(Box::new_uninit()).a(1).b(2.0).done();
-///     let owned: Foo = Foo::partial(MaybeUninit::uninit()).a(1).b(2.0).done();
+///     let boxed: Box<Foo> = Foo::partial(Box::new_uninit()).with_a(1).with_b(2.0).done();
+///     let owned: Foo = Foo::partial(MaybeUninit::uninit()).with_a(1).with_b(2.0).done();
 ///
 ///     let mut buf = MaybeUninit::uninit();
-///     let borrowed: &mut Foo = Foo::partial(&mut buf).a(1).b(2.0).done();
+///     let borrowed: &mut Foo = Foo::partial(&mut buf).with_a(1).with_b(2.0).done();
 ///     let _ = (boxed, owned, borrowed);
 /// }
 /// ```
@@ -230,11 +231,11 @@ pub use typenum;
 ///
 /// fn main() {
 ///     let mut p = Foo::partial(Box::new_uninit());
-///     let p = p.a(1);
+///     let p = p.with_a(1);
 ///     assert_eq!(*p.get_a(), 1);
 ///     let mut p = p;
 ///     p.set_a(123);
-///     let p = p.b(2.0);
+///     let p = p.with_b(2.0);
 ///     let foo = p.done();
 ///     assert_eq!(foo.a, 123);
 /// }
@@ -258,12 +259,12 @@ pub use typenum;
 /// }
 ///
 /// fn main() {
-///     let bar = Bar::partial(Box::new_uninit())._0(1)._1(2.0).done();
+///     let bar = Bar::partial(Box::new_uninit()).with__0(1).with__1(2.0).done();
 ///     assert_eq!(bar.0, 1);
 ///
 ///     let pair = Pair::<String>::partial(Box::new_uninit())
-///         .name("x")
-///         .value(String::from("y"))
+///         .with_name("x")
+///         .with_value(String::from("y"))
 ///         .done();
 ///     assert_eq!(pair.name, "x");
 ///     assert_eq!(pair.value, "y");
@@ -272,10 +273,11 @@ pub use typenum;
 ///
 /// # Behavior
 ///
-/// - **Field initialization** — each field's builder method can be called in
-///   any order, but at most once; calling it twice is a compile error.
+/// - **Field initialization** — each field offers `with_field(value)`,
+///   `emplace_field(init)`, and `uninit_field()`; the builder methods can be
+///   called in any order, but at most once (a second call is a compile error).
 /// - **Field access** — after a field is initialized you can read it with
-///   `get_field()`, mutate it with `get_field_mut()`, or assign with
+///   `get_field()`, mutate it with `get_mut_field()`, or assign with
 ///   `set_field(value)`.
 /// - **`done()`** — finalizes the builder once every field is initialized, both
 ///   as an inherent method and through the [`CtorComplete`] trait.
@@ -537,7 +539,7 @@ pub mod test_reference {
             #![allow(clippy::missing_safety_doc)]
             use super::*;
             use crate::{AnyUninit, ThisPtr};
-            use core::mem::ManuallyDrop;
+            use core::mem::{ManuallyDrop, MaybeUninit};
             use core::ops::{BitAnd, BitOr};
             use typenum::{Or, Shleft, U0, U1, U2, U3};
 
@@ -607,12 +609,27 @@ pub mod test_reference {
                 N: ThisPtr<Target = super::super::Foo> + State,
                 N::Flags: BitAnd<U1, Output = U0>,
             {
+                pub fn uninit_foo(&mut self) -> &mut MaybeUninit<i32> {
+                    unsafe {
+                        let ptr: *mut _ = &mut (*self.0.this_mut().as_mut_ptr()).foo;
+                        &mut *ptr.cast()
+                    }
+                }
+
                 pub unsafe fn assume_init_foo(self) -> Partial<foo<N>> {
                     Partial(foo(self.0))
                 }
 
-                pub fn foo(mut self, value: i32) -> Partial<foo<N>> {
+                pub fn with_foo(mut self, value: i32) -> Partial<foo<N>> {
                     unsafe { core::ptr::write(&mut (*self.0.this_mut().as_mut_ptr()).foo, value) };
+                    Partial(foo(self.0))
+                }
+
+                pub fn emplace_foo(
+                    mut self,
+                    init: impl for<'a> FnOnce(&'a mut MaybeUninit<i32>) -> &'a mut i32,
+                ) -> Partial<foo<N>> {
+                    _ = init(self.uninit_foo());
                     Partial(foo(self.0))
                 }
             }
@@ -622,12 +639,27 @@ pub mod test_reference {
                 N: ThisPtr<Target = super::super::Foo> + State,
                 N::Flags: BitAnd<U2, Output = U0>,
             {
+                pub fn uninit_bar(&mut self) -> &mut MaybeUninit<f32> {
+                    unsafe {
+                        let ptr: *mut _ = &mut (*self.0.this_mut().as_mut_ptr()).bar;
+                        &mut *ptr.cast()
+                    }
+                }
+
                 pub unsafe fn assume_init_bar(self) -> Partial<bar<N>> {
                     Partial(bar(self.0))
                 }
 
-                pub fn bar(mut self, value: f32) -> Partial<bar<N>> {
+                pub fn with_bar(mut self, value: f32) -> Partial<bar<N>> {
                     unsafe { core::ptr::write(&mut (*self.0.this_mut().as_mut_ptr()).bar, value) };
+                    Partial(bar(self.0))
+                }
+
+                pub fn emplace_bar(
+                    mut self,
+                    init: impl for<'a> FnOnce(&'a mut MaybeUninit<f32>) -> &'a mut f32,
+                ) -> Partial<bar<N>> {
+                    _ = init(self.uninit_bar());
                     Partial(bar(self.0))
                 }
             }
@@ -637,13 +669,14 @@ pub mod test_reference {
                 N: ThisPtr<Target = super::super::Foo> + State,
                 N::Flags: BitAnd<U1, Output = U1>,
             {
-                pub fn set_foo(&mut self, value: i32) {
-                    *self.get_foo_mut() = value;
+                pub fn set_foo(&mut self, value: i32) -> &mut Self {
+                    *self.get_mut_foo() = value;
+                    self
                 }
                 pub fn get_foo(&self) -> &i32 {
                     unsafe { &(*self.0.this().as_ptr()).foo }
                 }
-                pub fn get_foo_mut(&mut self) -> &mut i32 {
+                pub fn get_mut_foo(&mut self) -> &mut i32 {
                     unsafe { &mut (*self.0.this_mut().as_mut_ptr()).foo }
                 }
             }
@@ -653,13 +686,14 @@ pub mod test_reference {
                 N: ThisPtr<Target = super::super::Foo> + State,
                 N::Flags: BitAnd<U2, Output = U2>,
             {
-                pub fn set_bar(&mut self, value: f32) {
-                    *self.get_bar_mut() = value;
+                pub fn set_bar(&mut self, value: f32) -> &mut Self {
+                    *self.get_mut_bar() = value;
+                    self
                 }
                 pub fn get_bar(&self) -> &f32 {
                     unsafe { &(*self.0.this().as_ptr()).bar }
                 }
-                pub fn get_bar_mut(&mut self) -> &mut f32 {
+                pub fn get_mut_bar(&mut self) -> &mut f32 {
                     unsafe { &mut (*self.0.this_mut().as_mut_ptr()).bar }
                 }
             }
@@ -687,9 +721,9 @@ pub mod test_reference {
     #[test]
     fn test1() {
         let a = Foo::partial(Box::new_uninit());
-        let mut a = a.foo(1);
+        let mut a = a.with_foo(1);
         a.set_foo(123);
-        let a = a.bar(456.0).done();
+        let a = a.with_bar(456.0).done();
         assert_eq!(a.foo, 123);
         assert_eq!(a.bar, 456.0)
     }
@@ -708,9 +742,9 @@ pub mod test_macro {
     #[test]
     fn macro_generates_partial() {
         let a = Foo::partial(Box::new_uninit());
-        let mut a = a.foo(1);
+        let mut a = a.with_foo(1);
         a.set_foo(123);
-        let a = a.bar(456.0).done();
+        let a = a.with_bar(456.0).done();
         assert_eq!(a.foo, 123);
         assert_eq!(a.bar, 456.0);
     }

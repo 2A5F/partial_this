@@ -18,11 +18,11 @@ mod complex_fields {
     #[test]
     fn builds_complex() {
         let p = Complex::partial(Box::new_uninit());
-        let a = p.name("hi");
-        let b = a.values([1, 2, 3].to_vec());
-        let c = b.maybe(Some("x".to_string()));
-        let d = c.bytes([1, 2, 3, 4]);
-        let r = d.boxed(Box::new("y".to_string())).done();
+        let a = p.with_name("hi");
+        let b = a.with_values([1, 2, 3].to_vec());
+        let c = b.with_maybe(Some("x".to_string()));
+        let d = c.with_bytes([1, 2, 3, 4]);
+        let r = d.with_boxed(Box::new("y".to_string())).done();
         assert_eq!(r.name, "hi");
         assert_eq!(r.values, vec![1, 2, 3]);
         assert_eq!(r.maybe, Some("x".to_string()));
@@ -44,8 +44,8 @@ mod lifetime_struct {
     fn builds_lifetime() {
         let owned = String::from("hello");
         let p = Borrowed::partial(Box::new_uninit());
-        let a = p.name(owned.as_str());
-        let r = a.len(owned.len()).done();
+        let a = p.with_name(owned.as_str());
+        let r = a.with_len(owned.len()).done();
         assert_eq!(r.name, "hello");
         assert_eq!(r.len, 5);
     }
@@ -63,8 +63,8 @@ mod generic_struct {
     #[test]
     fn builds_generic() {
         let p = Generic::<String>::partial(Box::new_uninit());
-        let a = p.value("hello".to_string());
-        let r = a.count(1).done();
+        let a = p.with_value("hello".to_string());
+        let r = a.with_count(1).done();
         assert_eq!(r.value, "hello");
         assert_eq!(r.count, 1);
     }
@@ -85,8 +85,8 @@ mod bounded_generic {
     #[test]
     fn builds_bounded() {
         let p = Bounded::<String>::partial(Box::new_uninit());
-        let a = p.value("x".to_string());
-        let r = a.extra(vec!["y".to_string()]).done();
+        let a = p.with_value("x".to_string());
+        let r = a.with_extra(vec!["y".to_string()]).done();
         assert_eq!(r.value, "x");
         assert_eq!(r.extra, vec!["y".to_string()]);
     }
@@ -105,8 +105,8 @@ mod lifetime_and_generic {
     fn builds_both() {
         let owned = String::from("hi");
         let p = Both::<'_, String>::partial(Box::new_uninit());
-        let a = p.name(owned.as_str());
-        let r = a.value(String::from("there")).done();
+        let a = p.with_name(owned.as_str());
+        let r = a.with_value(String::from("there")).done();
         assert_eq!(r.name, "hi");
         assert_eq!(r.value, "there");
     }
@@ -127,11 +127,11 @@ mod generic_name_collision {
     #[test]
     fn builds() {
         let p = Collision::<String, i32, f64, char, 4>::partial(Box::new_uninit());
-        let a = p.f(String::from("f"));
-        let b = a.n(1);
-        let c = b.c(2.0);
-        let d = c.u('x');
-        let r = d.data([0u8; 4]).done();
+        let a = p.with_f(String::from("f"));
+        let b = a.with_n(1);
+        let c = b.with_c(2.0);
+        let d = c.with_u('x');
+        let r = d.with_data([0u8; 4]).done();
         assert_eq!(r.f, "f");
         assert_eq!(r.n, 1);
         assert_eq!(r.c, 2.0);
@@ -149,9 +149,9 @@ mod tuple_struct {
     #[test]
     fn builds_tuple() {
         let p = Tuple::partial(Box::new_uninit());
-        let mut a = p._0(1);
+        let mut a = p.with__0(1);
         a.set__0(123);
-        let r = a._1(456.0).done();
+        let r = a.with__1(456.0).done();
         assert_eq!(r.0, 123);
         assert_eq!(r.1, 456.0);
     }
@@ -166,8 +166,8 @@ mod generic_tuple {
     #[test]
     fn builds_generic_tuple() {
         let p = GenTuple::<String, i32>::partial(Box::new_uninit());
-        let a = p._0(String::from("x"));
-        let r = a._1(1).done();
+        let a = p.with__0(String::from("x"));
+        let r = a.with__1(1).done();
         assert_eq!(r.0, "x");
         assert_eq!(r.1, 1);
     }
@@ -185,8 +185,8 @@ mod private_field {
     #[test]
     fn builds() {
         let p = Mixed::partial(Box::new_uninit());
-        let x = p.a(1);
-        let r = x.b(2.0).done();
+        let x = p.with_a(1);
+        let r = x.with_b(2.0).done();
         assert_eq!(r.a, 1);
         assert_eq!(r.b, 2.0);
     }
@@ -203,7 +203,7 @@ mod no_pub_use {
     #[test]
     fn builds() {
         let p = NoExport::partial(Box::new_uninit());
-        let r = p.a(1).done();
+        let r = p.with_a(1).done();
         assert_eq!(r.a, 1);
     }
 }
@@ -220,7 +220,7 @@ mod private_module_export {
     #[test]
     fn builds() {
         let p = Holder::partial(Box::new_uninit());
-        let r = p.a(1).b(2.0).done();
+        let r = p.with_a(1).with_b(2.0).done();
         assert_eq!(r.a, 1);
         assert_eq!(r.b, 2.0);
     }

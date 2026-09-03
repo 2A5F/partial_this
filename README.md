@@ -20,8 +20,8 @@ pub struct Foo {
 
 fn test() {
     let p = Foo::partial(Box::new_uninit());
-    let p = p.foo(1);
-    let p = p.bar(1.0);
+    let p = p.with_foo(1);
+    let p = p.with_bar(1.0);
     let foo: Box<Foo> = p.done();
     println!("{:?}", foo);
 }
@@ -41,25 +41,25 @@ fn test() {
 - Field initialization methods. Can be called in any order and at most once.
   ```rust
   // ok
-  let p = p.foo(1);
-  let p = p.bar(1.0);
+  let p = p.with_foo(1);
+  let p = p.with_bar(1.0);
   ```
   ```rust
   // ok
-  let p = p.bar(1.0);
-  let p = p.foo(1);
+  let p = p.with_bar(1.0);
+  let p = p.with_foo(1);
   ```
   ```rust
-  let p = p.foo(1);
-  let p = p.foo(1); // error
+  let p = p.with_foo(1);
+  let p = p.with_foo(1); // error
   ```
 - Field access methods. Can be called after initialization.
   ```rust
-  let p = p.foo(1);
+  let p = p.with_foo(1);
   println!("{}", p.get_foo());
   ```
   ```rust
-  let mut p = p.foo(1);
+  let mut p = p.with_foo(1);
   p.set_foo(123);
   ```
 - Done method.Can be called after all fields are initialized.
