@@ -6,15 +6,15 @@ resolver = "3"
 authors = ["2A5F"]
 description = "Type-safe partial construction"
 edition = "2024"
-keywords = ["ctor", "partial", "constructor"]
+keywords = ["ctor", "partial", "construction", "constructor", "placement_new", "placement", "emplace"]
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/2A5F/partial_this"
-version = "0.5.1"
+version = "0.5.2"
 
 [workspace.dependencies]
-partial_this = {path = "partial_this", version = "0.5.1"}
-partial_this_macro = {path = "partial_this_macro", version = "0.5.1"}
+partial_this = {path = "partial_this", version = "0.5.2"}
+partial_this_macro = {path = "partial_this_macro", version = "0.5.2"}
 proc-macro2 = "1"
 quote = "1"
 syn = {version = "3", features = ["full"]}
