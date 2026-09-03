@@ -100,7 +100,7 @@
 //!
 //! # Tuple and generic structs
 //!
-//! Tuple structs use `_0`, `_1`, ... as field method names; generic and
+//! Tuple structs use `with_0`, `with_1`, ... as field method names; generic and
 //! lifetime-parameterized structs are also supported:
 //!
 //! ```rust
@@ -116,7 +116,7 @@
 //! }
 //!
 //! fn main() {
-//!     let bar = Bar::partial(Box::new_uninit()).with__0(1).with__1(2.0).done();
+//!     let bar = Bar::partial(Box::new_uninit()).with_0(1).with_1(2.0).done();
 //!     assert_eq!(bar.0, 1);
 //!     assert_eq!(bar.1, 2.0);
 //!
@@ -243,8 +243,8 @@ pub use typenum;
 ///
 /// # Tuple and generic structs
 ///
-/// Tuple structs use `_0`, `_1`, ... as field names; generic and lifetime
-/// structs are supported too:
+/// Tuple structs use `with_0`, `with_1`, ... as field method names; generic and
+/// lifetime structs are supported too:
 ///
 /// ```
 /// use partial_this::partial;
@@ -259,7 +259,7 @@ pub use typenum;
 /// }
 ///
 /// fn main() {
-///     let bar = Bar::partial(Box::new_uninit()).with__0(1).with__1(2.0).done();
+///     let bar = Bar::partial(Box::new_uninit()).with_0(1).with_1(2.0).done();
 ///     assert_eq!(bar.0, 1);
 ///
 ///     let pair = Pair::<String>::partial(Box::new_uninit())

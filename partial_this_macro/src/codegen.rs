@@ -200,9 +200,12 @@ pub(crate) fn generate(item: &ItemStruct, cfg: &PartialConfig) -> syn::Result<To
 
 /// A field of the struct, with the data needed to generate its impls.
 struct FieldInfo {
-    /// Identifier used for generated method and marker names (`foo` for named
-    /// fields, `_0`/`_1` for tuple fields).
+    /// Identifier used for the marker struct name (`foo` for named fields,
+    /// `_0`/`_1` for tuple fields).
     name: Ident,
+    /// Suffix used to build the public method names (`foo` for named fields,
+    /// `0`/`1` for tuple fields, so `with_foo`/`with_0`).
+    method: String,
     /// Token used to access the field on the struct (`foo` for named fields,
     /// `0`/`1` for tuple fields).
     access: TokenStream,
@@ -223,10 +226,12 @@ fn collect_fields(item: &ItemStruct) -> syn::Result<Vec<FieldInfo>> {
                     .ident
                     .clone()
                     .ok_or_else(|| Error::new_spanned(field, "field is missing an identifier"))?;
+                let method = name.to_string();
                 let access = quote!(#name);
                 // Field indices start at `U1`.
                 fields.push(FieldInfo {
                     name,
+                    method,
                     access,
                     ty: field.ty.clone(),
                     index: i + 1,
@@ -237,6 +242,7 @@ fn collect_fields(item: &ItemStruct) -> syn::Result<Vec<FieldInfo>> {
         Fields::Unnamed(unnamed) => {
             for (i, field) in unnamed.unnamed.iter().enumerate() {
                 let name = format_ident!("_{}", i);
+                let method = i.to_string();
                 // Tuple fields are accessed by an unsuffixed numeric index.
                 let access = {
                     let lit = Literal::usize_unsuffixed(i);
@@ -245,6 +251,7 @@ fn collect_fields(item: &ItemStruct) -> syn::Result<Vec<FieldInfo>> {
                 // Field indices start at `U1`.
                 fields.push(FieldInfo {
                     name,
+                    method,
                     access,
                     ty: field.ty.clone(),
                     index: i + 1,
@@ -533,10 +540,10 @@ fn gen_builder_impls(
         let access = &f.access;
         let mask = mask_ty(f.index);
         let mty = marker_ty_super(fname, ty_args, n);
-        let assume_name = format_ident!("assume_init_{}", fname);
-        let uninit_name = format_ident!("uninit_{}", fname);
-        let with_name = format_ident!("with_{}", fname);
-        let emplace_name = format_ident!("emplace_{}", fname);
+        let assume_name = format_ident!("assume_init_{}", &f.method);
+        let uninit_name = format_ident!("uninit_{}", &f.method);
+        let with_name = format_ident!("with_{}", &f.method);
+        let emplace_name = format_ident!("emplace_{}", &f.method);
         let ctor = if is_generic {
             quote!(super::#fname(self.0, ::core::marker::PhantomData))
         } else {
@@ -605,13 +612,12 @@ fn gen_accessor_impls(
 ) -> TokenStream {
     let mut defs = TokenStream::new();
     for f in fields {
-        let fname = &f.name;
         let fty = &f.ty;
         let access = &f.access;
         let mask = mask_ty(f.index);
-        let set_name = format_ident!("set_{}", fname);
-        let get_name = format_ident!("get_{}", fname);
-        let get_mut_name = format_ident!("get_mut_{}", fname);
+        let set_name = format_ident!("set_{}", &f.method);
+        let get_name = format_ident!("get_{}", &f.method);
+        let get_mut_name = format_ident!("get_mut_{}", &f.method);
         let (impl_gen, impl_where) = impl_parts(
             struct_generics,
             &[quote!(#n)],

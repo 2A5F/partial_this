@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "partial_this"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "partial_this_macro",
  "typenum",
@@ -12,7 +12,7 @@ dependencies = [
 
 [[package]]
 name = "partial_this_macro"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "proc-macro2",
  "quote",
